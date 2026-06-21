@@ -1,0 +1,152 @@
+{
+  "urls": {
+    "vlc": {
+      "android_arm64-v8a": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-arm64-v8a.zip",
+          "sha256": "dbae70c264a9d86cd8d7fbd7ca35388cbe973de03636c08f0ac8d7cdb493f9ec"
+        }
+      ],
+      "android_armeabi-v7a": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-armeabi-v7a.zip",
+          "sha256": "9ce30b6e7940330ba3c18e80d1547a6997f772c2b44803ac9a7829f05f2d5fcf"
+        }
+      ],
+      "android_x86": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-x86.zip",
+          "sha256": "8d4bb859e4102a9fd29f636918a69fa11111b0d64d188e39ef5dd11f96571f33"
+        }
+      ],
+      "android_x86_64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-x86_64.zip",
+          "sha256": "c7ee67b1f851e97bb2b76aa59b39a250e30d55c6d560716923952109f9b6a9cf"
+        }
+      ],
+      "linux_arm64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-linux-arm64.zip",
+          "sha256": "3dabe437e013631530772fcc394c9e73da2e7446bfe5bd3a9d45a0fa6b6067b4"
+        }
+      ],
+      "linux_x64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-linux-x64.zip",
+          "sha256": "fc44586857153b7a1b3bb37920bad85dd3ce666f4b7cda37095b6519c9890af3"
+        }
+      ],
+      "macos_arm64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-macos-arm64.zip",
+          "sha256": "b8f96c83b15316d3326690c029d2f169ccda74c13f8f5d54cb5e2a1f0af824d6"
+        }
+      ],
+      "macos_x64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-macos-x64.zip",
+          "sha256": "9eb47464b7a23d99e0bc8e89f496d6853883552d60337b3efd0138207a7135dd"
+        }
+      ],
+      "windows_arm64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-windows-arm64.zip",
+          "sha256": "fc77370c3cab443301876a94f654ab3901d27679de94ce9c8aa43f6e1b06a08e"
+        }
+      ],
+      "windows_x64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-windows-x64.zip",
+          "sha256": "740e529a2b7d4d93661898f5915f0a492e7a34e951c4e37214e7fd44de9bf286"
+        }
+      ],
+      "windows_x86": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-windows-x86.zip",
+          "sha256": "4426133880e7af8070b6e78cd21c872528a15f66be1337b915ef9ebebd62ff1a"
+        }
+      ]
+    },
+    "mpv": {
+      "android_arm64-v8a": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-android-arm64-v8a.zip",
+          "sha256": "2b490795f56d3b9099c57da799d38709220f417740db760e74c3d8bc32a9849a"
+        }
+      ],
+      "android_armeabi-v7a": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-android-armeabi-v7a.zip",
+          "sha256": "735fb9856dac1f7aa42fc79146223a0d06d78dfc984fdbf833045628dcc0b316"
+        }
+      ],
+      "android_x86": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-android-x86.zip",
+          "sha256": "9384fec85382994c21853626dec881d83695b311cbe67507a340ed11a80c2c01"
+        }
+      ],
+      "android_x86_64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-android-x86_64.zip",
+          "sha256": "dc1b5d44ad4c5f4e9bfb4e7ddd289505c000b835392c24fb9494882d3b8e7a78"
+        }
+      ],
+      "linux_arm32": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-linux-arm32.zip",
+          "sha256": "eb285200ccac66070c820aa4a832268ce36b7295d5388754374b01d4b4e8e345"
+        }
+      ],
+      "linux_arm64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-linux-arm64.zip",
+          "sha256": "2fec9389aae38c2adfef6d3753280b6b3f152ad9cca9cac07786952baed4a8cb"
+        }
+      ],
+      "linux_x64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-linux-x64.zip",
+          "sha256": "d12e35835af36fab2ec561766c4d58b7e06d3cc8f9a968f47bdfe8f6010d1c20"
+        }
+      ],
+      "linux_x86": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-linux-x86.zip",
+          "sha256": "e48bbc5c642d87cd21bc33b8e384b9fad72ecfc7cb0ba6ae46876cc08510ca6d"
+        }
+      ],
+      "macos_arm64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-macos-arm64.zip",
+          "sha256": "3c4c445266528b50bb16e401f59c8240d246a87907c6b436ef3a479fce32fed4"
+        }
+      ],
+      "macos_x64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-macos-x64.zip",
+          "sha256": "f51a59ec8af9c3ef1b604d31ec82ae967ab5aa703393f7df1cdb5a485aaab091"
+        }
+      ],
+      "windows_arm64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-windows-arm64.zip",
+          "sha256": "c320d1c9d18248b773e99256ba91222ce98f7df3dc18cd7d22dce57150089cd3"
+        }
+      ],
+      "windows_x64": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-windows-x64.zip",
+          "sha256": "0a1e614d3b3db315895d19b1e97013fd12da9bc20c50d02d5de3b71a959dfdfb"
+        }
+      ],
+      "windows_x86": [
+        {
+          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-windows-x86.zip",
+          "sha256": "21f2e086dc9328b6888b38fc3ef7583567ac1b1d99e7d7d716f1ac904ab722a1"
+        }
+      ]
+    }
+  }
+}

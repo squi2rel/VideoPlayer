@@ -2,71 +2,66 @@ package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.vivecraft.Vivecraft;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.VertexConsumer;
-import org.jetbrains.annotations.Nullable;
+import net.minecraft.client.render.VertexConsumerProvider;
+import net.minecraft.client.util.math.MatrixStack;
 import org.joml.Matrix4f;
+import org.joml.Vector2f;
 import org.joml.Vector3f;
 
-import java.nio.ByteBuffer;
-
+import static com.github.squi2rel.vp.VideoPlayerMain.LOGGER;
 import static com.github.squi2rel.vp.VideoPlayerClient.config;
 
-public class VideoPlayer implements IVideoPlayer, MetaListener {
-    public final Vector3f p1, p2, p3, p4;
-    protected VlcDecoder decoder;
-    protected VideoQuad quad;
+public class VideoPlayer extends AbstractScreenPlayer implements RateAdjustablePlayer, MetaListener {
+    protected VideoBackend backend;
     protected boolean initialized = false;
-    protected boolean changed = false;
     protected long targetTime = -1;
     protected boolean is3d = false;
     public int videoWidth, videoHeight;
+    private String requestedBackend = VideoBackends.VLC;
+    private final java.util.function.BiConsumer<Integer, Integer> sizeListener = (w, h) -> {
+        videoWidth = w;
+        videoHeight = h;
+    };
 
-    protected final ClientVideoScreen screen;
-
-    public VideoPlayer(ClientVideoScreen screen, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4) {
-        this.screen = screen;
-        this.p1 = new Vector3f(p1);
-        this.p2 = new Vector3f(p2);
-        this.p3 = new Vector3f(p3);
-        this.p4 = new Vector3f(p4);
-    }
-
-    @Override
-    public @Nullable ClientVideoScreen screen() {
-        return screen;
-    }
-
-    @Override
-    public @Nullable ClientVideoScreen getTrackingScreen() {
-        return screen;
+    public VideoPlayer(ClientVideoScreen screen) {
+        super(screen);
     }
 
     @Override
     public void updateTexture() {
-        if (changed || !initialized) return;
-        ByteBuffer buf = decoder.decodeNextFrame();
-        if (buf == null || buf.capacity() == 0) return;
-        quad.updateTexture(buf);
+        if (!initialized) return;
+        backend.updateTexture();
     }
 
     @Override
     public synchronized void init() {
         if (initialized) throw new IllegalStateException("already initialized");
 
-        decoder = new VlcDecoder();
-        decoder.onSizeChanged((w, h) -> {
-            changed = true;
-            MinecraftClient.getInstance().execute(() -> {
-                videoWidth = w;
-                videoHeight = h;
-                quad.resize(w, h);
-                changed = false;
-            });
-        });
-        decoder.onFinish(() -> MinecraftClient.getInstance().execute(() -> quad.resize(1, 1)));
-
-        quad = new VideoQuad(decoder.getWidth(), decoder.getHeight());
+        requestedBackend = config == null ? VideoBackends.VLC : VideoBackends.normalize(config.videoBackend);
+        backend = VideoBackends.create(requestedBackend, sizeListener);
+        try {
+            backend.init();
+        } catch (Throwable e) {
+            if (VideoBackends.MPV.equals(backend.name())) {
+                LOGGER.warn("Failed to initialize MPV backend. Falling back to VLC.", e);
+                backend.cleanup();
+                backend = VideoBackends.createVlc(sizeListener);
+                try {
+                    backend.init();
+                } catch (Throwable fallbackError) {
+                    LOGGER.warn("Failed to initialize VLC fallback backend.", fallbackError);
+                    backend.cleanup();
+                    backend = new UnavailableVideoBackend(requestedBackend);
+                    backend.init();
+                }
+            } else {
+                LOGGER.warn("Failed to initialize video backend {}.", backend.name(), e);
+                backend.cleanup();
+                backend = new UnavailableVideoBackend(requestedBackend);
+                backend.init();
+            }
+        }
 
         initialized = true;
     }
@@ -83,69 +78,69 @@ public class VideoPlayer implements IVideoPlayer, MetaListener {
 
     @Override
     public void play(VideoInfo info) {
-        if (targetTime > 0) {
-            String[] params = info.params();
-            String[] newParams = new String[params.length + 1];
-            System.arraycopy(params, 0, newParams, 0, params.length);
-            newParams[newParams.length - 1] = ":start-time=" + targetTime / 1000f;
-            info = new VideoInfo(info.playerName(), info.name(), info.path(), info.rawPath(), info.expire(), info.seekable(), newParams);
-        }
-        decoder.onPlay(() -> decoder.submit(() -> decoder.setVolume(config.volume)));
-        decoder.init(info);
+        backend.play(info, targetTime, effectiveVolume());
     }
 
     @Override
     public int getTextureId() {
         if (initialized) {
-            return quad.getTextureId();
+            return backend.getTextureId();
         }
         return -1;
     }
 
     @Override
+    public boolean hasVideoFrame() {
+        return initialized && backend.hasVideoFrame();
+    }
+
+    @Override
     public void stop() {
-        decoder.stop();
-        quad.stop();
+        backend.stop();
     }
 
     @Override
     public boolean canPause() {
-        return decoder.canPause();
+        return backend.canPause();
     }
 
     @Override
     public void pause(boolean pause) {
-        decoder.pause(pause);
+        backend.pause(pause);
     }
 
     @Override
     public boolean isPaused() {
-        return decoder.isPaused();
+        return backend.isPaused();
     }
 
     @Override
     public void setVolume(int volume) {
-        decoder.setVolume(volume);
+        int clamped = Math.clamp(volume, 0, 100);
+        if (VideoBackends.MPV.equals(backendName())) {
+            screen.volume = clamped;
+        }
+        backend.setVolume(screen.metadata.getBool("mute", false) ? 0 : clamped);
     }
 
     @Override
     public boolean canSetProgress() {
-        return decoder.canSetProgress();
+        return backend.canSetProgress();
     }
 
     @Override
     public void setProgress(long progress) {
-        decoder.setProgress(progress);
+        backend.setProgress(progress);
     }
 
     @Override
     public long getProgress() {
-        return decoder.getProgress();
+        return backend.getProgress();
     }
 
     @Override
     public long getTotalProgress() {
-        return decoder.getTotalProgress();
+        return backend.getTotalProgress();
     }
 
     @Override
@@ -153,40 +148,99 @@ public class VideoPlayer implements IVideoPlayer, MetaListener {
         this.targetTime = targetTime;
     }
 
+    @Override
     public void setRate(float rate) {
-        decoder.setRate(rate);
+        backend.setRate(rate);
     }
 
+    @Override
     public float getRate() {
-        return decoder.getRate();
+        return backend.getRate();
     }
 
     @Override
     public synchronized void cleanup() {
         initialized = false;
-        if (decoder != null) decoder.cleanup();
-        if (quad != null) quad.cleanup();
+        if (backend != null) backend.cleanup();
     }
 
     @Override
     public void onMetaChanged() {
-        is3d = screen.meta.getOrDefault("3d", 0) != 0;
+        is3d = screen.stereo3d;
+        if (initialized && backend != null) {
+            backend.setVolume(effectiveVolume());
+        }
+    }
+
+    private int effectiveVolume() {
+        if (screen.metadata.getBool("mute", false)) return 0;
+        if (VideoBackends.MPV.equals(backendName())) return Math.clamp(screen.volume, 0, 100);
+        return config.volume;
+    }
+
+    public String backendName() {
+        return backend == null ? VideoBackends.VLC : backend.name();
+    }
+
+    public String requestedBackendName() {
+        return requestedBackend;
     }
 
     @Override
-    public void draw(Matrix4f mat, VertexConsumer consumer, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, float u1, float v1, float u2, float v2) {
+    public boolean flippedX() {
+        return initialized && backend.flippedX();
+    }
+
+    @Override
+    public boolean flippedY() {
+        return initialized && backend.flippedY();
+    }
+
+    @Override
+    public boolean isPostUpdate() {
+        return initialized && backend.isPostUpdate();
+    }
+
+    @Override
+    public void draw(MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen s) {
+        VideoPlayerRenderer.draw(this, matrices, consumers, s);
+        if (s.surface == ScreenSurface.SPHERE_360 && s.spherePreset && getTextureId() >= 0) {
+            Degree360Player.drawTexture(getTextureId(), matrices, consumers, s, is3d);
+        }
+    }
+
+    @Override
+    public void drawQuad(Matrix4f mat, VertexConsumer consumer, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, float u1, float v1, float u2, float v2) {
         if (is3d) {
             draw3D(mat, consumer, p1, p2, p3, p4, u1, v1, u2, v2);
             return;
         }
-        IVideoPlayer.super.draw(mat, consumer, p1, p2, p3, p4, u1, v1, u2, v2);
+        super.drawQuad(mat, consumer, p1, p2, p3, p4, u1, v1, u2, v2);
     }
 
     public void draw3D(Matrix4f mat, VertexConsumer consumer, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, float u1, float v1, float u2, float v2) {
         if (Vivecraft.loaded && Vivecraft.isRightEye()) {
-            IVideoPlayer.super.draw(mat, consumer, p1, p2, p3, p4, (u1 + u2) / 2, v1, u2, v2);
+            super.drawQuad(mat, consumer, p1, p2, p3, p4, (u1 + u2) / 2, v1, u2, v2);
         } else {
-            IVideoPlayer.super.draw(mat, consumer, p1, p2, p3, p4, u1, v1, (u1 + u2) / 2, v2);
+            super.drawQuad(mat, consumer, p1, p2, p3, p4, u1, v1, (u1 + u2) / 2, v2);
         }
+    }
+
+    @Override
+    public void drawVertex(Matrix4f mat, VertexConsumer consumer, Vector3f vertex, Vector2f uv, ClientVideoScreen target) {
+        drawVertex(mat, consumer, vertex, uv, null, target);
+    }
+
+    @Override
+    public void drawVertex(Matrix4f mat, VertexConsumer consumer, Vector3f vertex, Vector2f uv, Vector3f normal, ClientVideoScreen target) {
+        if (is3d) {
+            float split = (target.u1 + target.u2) * 0.5f;
+            if (Vivecraft.loaded && Vivecraft.isRightEye()) {
+                uv.x = split + (uv.x - target.u1) * 0.5f;
+            } else {
+                uv.x = target.u1 + (uv.x - target.u1) * 0.5f;
+            }
+        }
+        super.drawVertex(mat, consumer, vertex, uv, normal);
     }
 }

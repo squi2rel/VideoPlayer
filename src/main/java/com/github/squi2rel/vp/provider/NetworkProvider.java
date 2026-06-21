@@ -1,7 +1,9 @@
 package com.github.squi2rel.vp.provider;
 
+import com.github.squi2rel.vp.i18n.VpTranslation;
 import com.github.squi2rel.vp.video.IVideoListener;
 import com.github.squi2rel.vp.video.StreamListener;
+import com.github.squi2rel.vp.video.VideoParams;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.CompletableFuture;
@@ -12,13 +14,14 @@ public class NetworkProvider implements IVideoProvider {
         char first = str.charAt(0);
         if (first == '/' || first == '\\' || first == '.' || str.charAt(1) == ':') return null;
         return CompletableFuture.supplyAsync(() -> {
-            source.reply("正在解析视频流");
+            source.reply(VpTranslation.of("message.videoplayer.resolving_stream", "Resolving video stream"));
             StreamInfo info = getStreamInfo(str);
             if (info == null) {
-                source.reply("解析视频流失败");
+                source.reply(VpTranslation.of("message.videoplayer.resolve_stream_failed", "Failed to resolve video stream"));
                 return null;
             }
-            return new VideoInfo(source.name(), info.name, str, "", -1, info.seekable, NO_PARAMS);
+            String[] params = VideoParams.looksAudioOnlyPath(str) ? VideoParams.audioOnlyParams() : NO_PARAMS;
+            return new VideoInfo(source.name(), info.name, str, "", -1, info.seekable, params);
         });
     }
 

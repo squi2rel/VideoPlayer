@@ -1,11 +1,14 @@
 package com.github.squi2rel.vp.video;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
+import org.lwjgl.opengl.GL;
+import org.lwjgl.opengl.GLCapabilities;
 
 import java.nio.ByteBuffer;
 
 import static org.lwjgl.opengl.GL21.*;
+import static org.lwjgl.opengl.GL12.GL_BGRA;
+import static org.lwjgl.opengl.GL33.GL_TEXTURE_SWIZZLE_A;
 
 public class VideoQuad {
 
@@ -34,39 +37,50 @@ public class VideoQuad {
         regenTexture();
     }
 
-    public synchronized void stop() {
-        pbo.release();
-    }
-
     private void regenTexture() {
-        RenderSystem.bindTexture(textureId);
+        glBindTexture(GL_TEXTURE_2D, textureId);
 
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        forceOpaqueAlpha();
 
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, (ByteBuffer) null);
 
-        RenderSystem.bindTexture(0);
+        glBindTexture(GL_TEXTURE_2D, 0);
         textureInitialized = true;
     }
 
     public synchronized void updateTexture(ByteBuffer frameData) {
+        updateTexture(frameData, GL_RGBA);
+    }
+
+    public synchronized void updateBgraTexture(ByteBuffer frameData) {
+        updateTexture(frameData, GL_BGRA);
+    }
+
+    private void updateTexture(ByteBuffer frameData, int externalFormat) {
         if (!pbo.allocated()) return;
-        RenderSystem.bindTexture(textureId);
-        RenderSystem.pixelStore(GL_UNPACK_ALIGNMENT, 4);
-        RenderSystem.pixelStore(GL_UNPACK_ROW_LENGTH, width);
-        RenderSystem.pixelStore(GL_UNPACK_SKIP_ROWS, 0);
-        RenderSystem.pixelStore(GL_UNPACK_SKIP_PIXELS, 0);
+        glBindTexture(GL_TEXTURE_2D, textureId);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, width);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
         int prevPBO = glGetInteger(GL_PIXEL_UNPACK_BUFFER_BINDING);
-        pbo.bind();
-        ByteBuffer buf = pbo.map();
-        if (buf.remaining() == frameData.remaining()) buf.put(frameData);
-        pbo.unmap();
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, prevPBO);
-        RenderSystem.bindTexture(0);
+        try {
+            pbo.upload(frameData, () -> glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, externalFormat, GL_UNSIGNED_BYTE, 0));
+        } finally {
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, prevPBO);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+    }
+
+    private void forceOpaqueAlpha() {
+        GLCapabilities capabilities = GL.getCapabilities();
+        if (capabilities.OpenGL33 || capabilities.GL_ARB_texture_swizzle) {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE);
+        }
     }
 
     public void cleanup() {

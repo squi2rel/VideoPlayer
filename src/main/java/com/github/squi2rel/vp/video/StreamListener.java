@@ -1,176 +1,171 @@
 package com.github.squi2rel.vp.video;
 
+import com.github.squi2rel.vp.NativeDownloadConfig;
+import com.github.squi2rel.vp.NativePackageManager;
+import com.github.squi2rel.vp.VideoPlayerMain;
 import com.github.squi2rel.vp.provider.VideoInfo;
-import uk.co.caprica.vlcj.factory.MediaPlayerFactory;
-import uk.co.caprica.vlcj.player.base.MediaPlayer;
-import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter;
 
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 public class StreamListener implements IVideoListener {
-    public static final ExecutorService releaseExecutor = Executors.newCachedThreadPool();
+    private static volatile boolean mpvAvailable;
+    private static volatile boolean vlcAvailable;
+    private static volatile Throwable mpvError;
+    private static volatile Throwable vlcError;
+    private static volatile String preferredBackend = NativePackageManager.BACKEND_MPV;
+    private static volatile String configuredProxy = "";
+    private static volatile String configuredYtdlPath = "";
 
-    private static final ConcurrentHashMap<MediaPlayer, StreamListener> references = new ConcurrentHashMap<>();
-    public static MediaPlayerFactory factory;
-    private MediaPlayer player;
-    private Consumer<Boolean> playing = seekable -> {};
-    private Runnable stopped = () -> {};
-    private Runnable errored = () -> {};
-    private Runnable timeout = () -> {};
-    private final VideoInfo info;
-
-    public long lastPlayTime;
-    public long lastPlayUpdateTime;
-
-    private static final MediaPlayerEventAdapter callback = new MediaPlayerEventAdapter() {
-        @Override
-        public void playing(MediaPlayer mediaPlayer) {
-            StreamListener listener = references.get(mediaPlayer);
-            if (listener == null) return;
-            listener.playing.accept(listener.player.status().isSeekable());
-        }
-
-        @Override
-        public void stopped(MediaPlayer mediaPlayer) {
-            finish(mediaPlayer);
-        }
-
-        @Override
-        public void finished(MediaPlayer mediaPlayer) {
-            finish(mediaPlayer);
-        }
-
-        @Override
-        public void error(MediaPlayer mediaPlayer) {
-            StreamListener listener = references.get(mediaPlayer);
-            if (listener == null) return;
-            synchronized (listener) {
-                if (listener.player == null) return;
-                references.remove(mediaPlayer);
-                listener.errored.run();
-                listener.stopped.run();
-                listener.player = null;
-                mediaPlayer.submit(() -> {
-                    mediaPlayer.controls().stop();
-                    releaseExecutor.submit(mediaPlayer::release);
-                });
-            }
-        }
-
-        @Override
-        public void timeChanged(MediaPlayer mediaPlayer, long newTime) {
-            StreamListener listener = references.get(mediaPlayer);
-            if (listener == null) return;
-            synchronized (listener) {
-                if (listener.player == null) return;
-                listener.lastPlayTime = newTime;
-                listener.lastPlayUpdateTime = System.currentTimeMillis();
-            }
-        }
-    };
-
-    private static void finish(MediaPlayer mediaPlayer) {
-        StreamListener listener = references.get(mediaPlayer);
-        if (listener == null) return;
-        synchronized (listener) {
-            if (listener.player == null) return;
-            references.remove(mediaPlayer);
-            listener.player = null;
-            listener.stopped.run();
-        }
-        releaseExecutor.submit(mediaPlayer::release);
-    }
+    private final IVideoListener delegate;
 
     public StreamListener(VideoInfo info) {
-        this.info = info;
+        this.delegate = create(info);
     }
 
     public static boolean accept(VideoInfo info) {
-        return !info.path().isEmpty();
+        return info != null && info.path() != null && !info.path().isEmpty();
+    }
+
+    public static synchronized boolean load() {
+        if (mpvAvailable || vlcAvailable) return true;
+        String first = NativeDownloadConfig.normalizeBackend(preferredBackend);
+        String second = NativePackageManager.BACKEND_MPV.equals(first)
+                ? NativePackageManager.BACKEND_VLC
+                : NativePackageManager.BACKEND_MPV;
+
+        if (loadBackend(first, false)) {
+            return true;
+        }
+
+        Throwable firstError = NativePackageManager.BACKEND_MPV.equals(first) ? mpvError : vlcError;
+        VideoPlayerMain.LOGGER.warn("{} stream listener backend is not available; trying {} fallback.", first.toUpperCase(), second.toUpperCase(), firstError);
+        if (loadBackend(second, true)) {
+            return true;
+        }
+        VideoPlayerMain.LOGGER.warn("No stream listener backend is available");
+        return false;
+    }
+
+    public static synchronized void configurePreferredBackend(String backend) {
+        String normalized = NativeDownloadConfig.normalizeBackend(backend);
+        if (!normalized.equals(preferredBackend)) {
+            preferredBackend = normalized;
+            resetLoadState();
+        }
+    }
+
+    public static void configureProxy(String proxy) {
+        configuredProxy = proxy == null ? "" : proxy.trim();
+    }
+
+    static String configuredProxy() {
+        return configuredProxy;
+    }
+
+    public static void configureYtdlPath(String ytdlPath) {
+        configuredYtdlPath = ytdlPath == null ? "" : ytdlPath.trim();
+    }
+
+    static String configuredYtdlPath() {
+        return configuredYtdlPath;
+    }
+
+    public static synchronized void resetLoadState() {
+        mpvAvailable = false;
+        vlcAvailable = false;
+        mpvError = null;
+        vlcError = null;
+        MpvLibrary.resetLoadState();
+        VlcStreamListener.resetLoadState();
+    }
+
+    private static boolean loadBackend(String backend, boolean fallback) {
+        if (NativePackageManager.BACKEND_MPV.equals(NativeDownloadConfig.normalizeBackend(backend))) {
+            mpvError = MpvLibrary.loadError();
+            mpvAvailable = mpvError == null;
+            if (mpvAvailable) {
+                try {
+                    MpvStreamListener.verifyAvailable();
+                    VideoPlayerMain.LOGGER.info("Using MPV stream listener{} backend", fallback ? " fallback" : "");
+                    return true;
+                } catch (Throwable t) {
+                    mpvError = t;
+                    mpvAvailable = false;
+                    VideoPlayerMain.LOGGER.warn("MPV stream listener backend failed self-test.", t);
+                }
+            }
+            return false;
+        }
+
+        if (VlcStreamListener.load()) {
+            vlcAvailable = true;
+            vlcError = null;
+            VideoPlayerMain.LOGGER.info("Using VLC stream listener{} backend", fallback ? " fallback" : "");
+            return true;
+        }
+        vlcError = VlcStreamListener.loadError();
+        return false;
+    }
+
+    private static IVideoListener create(VideoInfo info) {
+        load();
+        String first = NativeDownloadConfig.normalizeBackend(preferredBackend);
+        if (NativePackageManager.BACKEND_MPV.equals(first)) {
+            if (mpvAvailable) return new MpvStreamListener(info);
+            if (vlcAvailable) return new VlcStreamListener(info);
+        } else {
+            if (vlcAvailable) return new VlcStreamListener(info);
+            if (mpvAvailable) return new MpvStreamListener(info);
+        }
+
+        IllegalStateException error = new IllegalStateException("Stream listener backend is not loaded");
+        if (mpvError != null) error.addSuppressed(mpvError);
+        if (vlcError != null) error.addSuppressed(vlcError);
+        throw error;
     }
 
     @Override
     public long getProgress() {
-        return player == null ? -1 : lastPlayTime == 0 ? 0 : System.currentTimeMillis() - lastPlayUpdateTime + lastPlayTime;
+        return delegate.getProgress();
+    }
+
+    @Override
+    public void setProgress(long progress) {
+        delegate.setProgress(progress);
     }
 
     @Override
     public boolean isPlaying() {
-        return player != null;
+        return delegate.isPlaying();
     }
 
     @Override
     public void playing(Consumer<Boolean> playing) {
-        this.playing = playing;
+        delegate.playing(playing);
     }
 
     @Override
     public void stopped(Runnable stopped) {
-        this.stopped = stopped;
+        delegate.stopped(stopped);
     }
 
     @Override
     public void errored(Runnable errored) {
-        this.errored = errored;
+        delegate.errored(errored);
     }
 
     @Override
     public void timeout(Runnable timeout) {
-        this.timeout = timeout;
+        delegate.timeout(timeout);
     }
 
     @Override
     public void listen() {
-        player = factory.mediaPlayers().newMediaPlayer();
-        runAsync(() -> {
-            try {
-                Thread.sleep(10000);
-                if (isPlaying()) return;
-                MediaPlayer p = player;
-                synchronized (this) {
-                    if (player == null) return;
-                    references.remove(p);
-                    player = null;
-                    timeout.run();
-                    stopped.run();
-                }
-                p.submit(() -> {
-                    p.controls().stop();
-                    releaseExecutor.submit(p::release);
-                });
-            } catch (Exception ignored) {
-            }
-        });
-        player.events().addMediaPlayerEventListener(callback);
-        references.put(player, this);
-        lastPlayTime = 0;
-        player.media().play(info.path().replace("rtspt://", "rtsp://"), info.params());
+        delegate.listen();
     }
 
     @Override
     public void cancel() {
-        MediaPlayer p = player;
-        synchronized (this) {
-            if (player == null) return;
-            references.remove(player);
-            player = null;
-        }
-        p.submit(() -> {
-            p.controls().stop();
-            releaseExecutor.submit(p::release);
-        });
-    }
-
-    public static void runAsync(Runnable runnable) {
-        Thread t = new Thread(runnable);
-        t.setDaemon(true);
-        t.start();
-    }
-
-    public static void load() {
-        factory = new MediaPlayerFactory("--no-video", "--aout=none", "--no-xlib", "--intf=dummy", "--quiet");
+        delegate.cancel();
     }
 }

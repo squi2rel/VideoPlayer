@@ -1,0 +1,51 @@
+# Native runtime selection for the server-side stream listener.
+# Leave backend empty to use the default backend: mpv.
+#
+# Available backend / os / arch combinations:
+#   mpv / windows / x86
+#   mpv / windows / x64
+#   mpv / windows / arm64
+#   mpv / macos / x64
+#   mpv / macos / arm64
+#   mpv / linux / x86
+#   mpv / linux / x64
+#   mpv / linux / arm32
+#   mpv / linux / arm64
+#   mpv / android / arm64-v8a
+#   mpv / android / armeabi-v7a
+#   mpv / android / x86
+#   mpv / android / x86_64
+#   vlc / windows / x86
+#   vlc / windows / x64
+#   vlc / windows / arm64
+#   vlc / macos / x64
+#   vlc / macos / arm64
+#   vlc / linux / arm64
+#   vlc / linux / x64
+#   vlc / android / arm64-v8a
+#   vlc / android / armeabi-v7a
+#   vlc / android / x86
+#   vlc / android / x86_64
+native:
+  # Options: mpv, vlc. Empty means mpv.
+  backend: ""
+
+  # Manual platform override. Leave both empty to auto-detect from the server JVM.
+  # os options: windows, macos, linux, android
+  os: ""
+
+  # arch options depend on os:
+  #   windows: x86, x64, arm64
+  #   macos: x64, arm64
+  #   linux: x86, x64, arm32, arm64
+  #   android: arm64-v8a, armeabi-v7a, x86, x86_64
+  arch: ""
+
+  # HTTP(S) proxy used for native runtime downloads and YouTube yt-dlp/mpv playback.
+  # YouTube playback uses this proxy only after the source is recognized as a YouTube link.
+  # Examples: http://127.0.0.1:7890, http://user:pass@127.0.0.1:7890
+  download-proxy: ""
+
+  # Optional yt-dlp executable path for YouTube metadata and MPV's ytdl hook.
+  # Leave empty to search PATH. Examples: /usr/bin/yt-dlp, C:\Tools\yt-dlp.exe
+  mpv-ytdl-path: ""

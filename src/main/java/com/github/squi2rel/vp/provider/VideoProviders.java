@@ -12,9 +12,12 @@ public class VideoProviders {
     public static ArrayList<IVideoProvider> providers = new ArrayList<>();
 
     public static void register() {
+        providers.clear();
         providers.add(new BiliBiliVideoProvider());
         providers.add(new BiliBiliLiveProvider());
-        providers.add(new EntityViewProvider());
+        providers.add(new CloudMusicProvider());
+        providers.add(new CloudMusicMVProvider());
+        providers.add(new YouTubeProvider());
         providers.add(new NetworkProvider());
     }
 

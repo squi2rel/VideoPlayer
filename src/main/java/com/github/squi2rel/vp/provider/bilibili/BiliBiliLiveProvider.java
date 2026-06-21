@@ -1,5 +1,6 @@
 package com.github.squi2rel.vp.provider.bilibili;
 
+import com.github.squi2rel.vp.i18n.VpTranslation;
 import com.github.squi2rel.vp.provider.IProviderSource;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.google.gson.JsonObject;
@@ -27,7 +28,7 @@ public class BiliBiliLiveProvider extends BiliBiliProvider {
                 HttpResponse<String> response = client.send(makeRequest(String.format(FETCH_URL, cid)), HttpResponse.BodyHandlers.ofString());
                 JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject().getAsJsonObject("data");
                 if (root.get("live_status").getAsLong() != 1) {
-                    source.reply("直播间未开播");
+                    source.reply(VpTranslation.of("message.videoplayer.bilibili_live_offline", "The live room is not streaming"));
                     return null;
                 }
                 return new VideoMeta(root.get("title").getAsString(), root.get("room_id").getAsString());
@@ -41,7 +42,7 @@ public class BiliBiliLiveProvider extends BiliBiliProvider {
                 HttpResponse<String> response = client.send(makeRequest(String.format(PLAY_URL, meta.cid())), HttpResponse.BodyHandlers.ofString());
                 JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject().getAsJsonObject("data");
                 String url = root.getAsJsonArray("durl").get(0).getAsJsonObject().get("url").getAsString();
-                return new VideoInfo(source.name(), meta.title(), url, str, System.currentTimeMillis() + 10000, false, VLC_PARAMS);
+                return new VideoInfo(source.name(), meta.title(), url, str, System.currentTimeMillis() + 10000, false, MPV_PARAMS);
             } catch (Exception e) {
                 source.reply(e.toString());
                 return null;

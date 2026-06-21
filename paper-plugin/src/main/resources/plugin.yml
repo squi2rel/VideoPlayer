@@ -1,0 +1,62 @@
+name: VideoPlayer
+main: com.github.squi2rel.vp.VideoPlayerPaperPlugin
+version: ${version}
+api-version: '1.21'
+folia-supported: true
+author: squi2rel
+description: VideoPlayer server plugin bridge for the Fabric client mod.
+permissions:
+  videoplayer.admin:
+    description: Allows VideoPlayer plugin administration and custom metadata changes.
+    default: op
+  videoplayer.action.play:
+    description: Allows queueing videos.
+    default: true
+  videoplayer.action.seek:
+    description: Allows seeking videos.
+    default: true
+  videoplayer.action.sync:
+    description: Allows syncing video progress.
+    default: true
+  videoplayer.action.vote_skip:
+    description: Allows voting to skip.
+    default: true
+  videoplayer.action.force_skip:
+    description: Allows force skipping.
+    default: true
+  videoplayer.action.set_skip_percent:
+    description: Allows changing skip vote percent.
+    default: true
+  videoplayer.action.create_area:
+    description: Allows creating video areas.
+    default: true
+  videoplayer.action.remove_area:
+    description: Allows removing video areas.
+    default: true
+  videoplayer.action.create_screen:
+    description: Allows creating video screens.
+    default: true
+  videoplayer.action.remove_screen:
+    description: Allows removing video screens.
+    default: true
+  videoplayer.action.update_screen:
+    description: Allows updating video screens.
+    default: true
+  videoplayer.action.set_uv:
+    description: Allows changing screen UVs.
+    default: true
+  videoplayer.action.set_scale:
+    description: Allows changing screen scale.
+    default: true
+  videoplayer.action.set_metadata:
+    description: Allows changing screen metadata.
+    default: true
+  videoplayer.action.set_idle_play:
+    description: Allows changing IdlePlay.
+    default: true
+  videoplayer.action.auto_sync:
+    description: Allows auto sync requests.
+    default: true
+  videoplayer.action.open_menu:
+    description: Allows opening the management UI.
+    default: true

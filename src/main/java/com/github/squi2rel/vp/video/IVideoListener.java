@@ -5,6 +5,9 @@ import java.util.function.Consumer;
 public interface IVideoListener {
     long getProgress();
 
+    default void setProgress(long progress) {
+    }
+
     boolean isPlaying();
 
     void playing(Consumer<Boolean> playing);

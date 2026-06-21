@@ -4,14 +4,9 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "ClientPlayNetworkHandlerMixin",
-    "ClientWorldAccessor",
+    "DrawContextAccessor",
     "GameRendererAccessor",
-    "GameRendererMixin",
-    "LivingEntityRendererMixin",
-    "MinecraftClientAccessor",
     "MinecraftClientMixin",
-    "WindowMixin",
-    "WorldRendererAccessor",
     "WorldRendererMixin"
   ],
   "injectors": {

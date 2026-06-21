@@ -1,0 +1,95 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '9.2.2'
+}
+
+version = rootProject.mod_version
+group = rootProject.maven_group
+
+base {
+    archivesName = "${rootProject.archives_base_name}-Paper"
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'Paper'
+        url = 'https://repo.papermc.io/repository/maven-public/'
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            setSrcDirs([])
+            srcDir 'src/main/java'
+        }
+        resources {
+            setSrcDirs(['src/main/resources'])
+        }
+    }
+}
+
+def sharedMainSources = fileTree("${rootProject.projectDir}/src/main/java") {
+    exclude 'android/**'
+    exclude 'com/github/squi2rel/vp/VideoPlayerMain.java'
+    exclude 'com/github/squi2rel/vp/DataHolder.java'
+    exclude 'com/github/squi2rel/vp/network/ServerPacketHandler.java'
+    exclude 'com/github/squi2rel/vp/network/VideoPayload.java'
+    exclude 'com/github/squi2rel/vp/provider/PlayerProviderSource.java'
+    exclude 'com/github/squi2rel/vp/permission/VideoPermissions.java'
+    exclude 'com/github/squi2rel/vp/video/ScreenBroadcaster.java'
+    exclude 'com/github/squi2rel/vp/video/VideoArea.java'
+    exclude 'com/github/squi2rel/vp/i18n/MinecraftTexts.java'
+}
+
+dependencies {
+    compileOnly "io.papermc.paper:paper-api:${rootProject.paper_api_version}"
+    compileOnly "org.jetbrains:annotations:26.0.2"
+    compileOnly "org.slf4j:slf4j-api:2.0.16"
+
+    implementation "io.netty:netty-buffer:4.1.118.Final"
+    implementation "org.joml:joml:1.10.8"
+    implementation "com.google.code.gson:gson:2.11.0"
+    implementation "net.java.dev.jna:jna:5.17.0"
+    implementation "org.brotli:dec:0.1.2"
+}
+
+tasks.processResources {
+    inputs.property "version", project.version
+    from("${rootProject.projectDir}/src/main/resources/assets/videoplayer/native-downloads.json") {
+        into 'assets/videoplayer'
+    }
+    filesMatching("plugin.yml") {
+        expand "version": project.version
+    }
+}
+
+tasks.named('compileJava', JavaCompile) {
+    source sharedMainSources
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = 'UTF-8'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+tasks.shadowJar {
+    archiveClassifier = ''
+    mergeServiceFiles()
+    relocate 'com.google.gson', 'com.github.squi2rel.vp.paper.shadow.gson'
+    relocate 'io.netty', 'com.github.squi2rel.vp.paper.shadow.netty'
+    relocate 'org.brotli', 'com.github.squi2rel.vp.paper.shadow.brotli'
+    relocate 'org.joml', 'com.github.squi2rel.vp.paper.shadow.joml'
+}
+
+tasks.build {
+    dependsOn tasks.shadowJar
+}

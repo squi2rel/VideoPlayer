@@ -7,6 +7,7 @@ import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -32,7 +33,7 @@ public class VideoArea {
         }
     }
 
-    public synchronized void remove() {
+    public void remove() {
         for (VideoScreen screen : screens) {
             screen.remove();
         }
@@ -46,11 +47,18 @@ public class VideoArea {
         return min.x <= v.x && min.y <= v.y && min.z <= v.z && max.x >= v.x && max.y >= v.y && max.z >= v.z;
     }
 
-    public synchronized boolean addPlayer(UUID uuid) {
+    public boolean addPlayer(UUID uuid) {
         return players.add(uuid);
     }
 
-    public synchronized boolean removePlayer(UUID uuid) {
+    public void playerEntered() {
+        if (players.size() > 1) return;
+        for (VideoScreen screen : screens) {
+            screen.playNext();
+        }
+    }
+
+    public boolean removePlayer(UUID uuid) {
         boolean removed = players.remove(uuid);
         if (removed) {
             for (VideoScreen screen : screens) {
@@ -60,21 +68,25 @@ public class VideoArea {
         return removed;
     }
 
-    public synchronized boolean containsPlayer(UUID uuid) {
+    public boolean containsPlayer(UUID uuid) {
         return players.contains(uuid);
     }
 
-    public synchronized void forEachPlayer(Consumer<UUID> consumer) {
+    public void forEachPlayer(Consumer<UUID> consumer) {
         for (UUID player : players) {
             consumer.accept(player);
         }
     }
 
-    public synchronized boolean hasPlayer() {
+    public List<UUID> playerSnapshot() {
+        return List.copyOf(players);
+    }
+
+    public boolean hasPlayer() {
         return !players.isEmpty();
     }
 
-    public synchronized int players() {
+    public int players() {
         return players.size();
     }
 

@@ -1,63 +1,81 @@
 package com.github.squi2rel.vp.video;
 
-import com.github.squi2rel.vp.ScreenRenderer;
 import com.github.squi2rel.vp.provider.VideoInfo;
-import net.minecraft.client.render.*;
+import net.minecraft.client.render.VertexConsumer;
+import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
+import org.joml.Vector2f;
 import org.joml.Vector3f;
-
-import static com.github.squi2rel.vp.VideoPlayerClient.config;
 
 @SuppressWarnings("unused")
 public interface IVideoPlayer {
-    Vector3f tmp1 = new Vector3f(), tmp2 = new Vector3f(), tmp3 = new Vector3f(), tmp4 = new Vector3f();
-
     @Nullable ClientVideoScreen screen();
 
-    @Nullable ClientVideoScreen getTrackingScreen();
+    default @Nullable ClientVideoScreen getTrackingScreen() {
+        return screen();
+    }
 
-    boolean canPause();
-
-    void init();
-
-    static boolean accept(VideoInfo info) {
+    default boolean canPause() {
         return false;
+    }
+
+    default void init() {
     }
 
     int getWidth();
 
     int getHeight();
 
-    void play(VideoInfo info);
+    default void play(VideoInfo info) {
+    }
 
-    void cleanup();
+    default void cleanup() {
+    }
 
     int getTextureId();
 
-    void stop();
+    default boolean hasVideoFrame() {
+        return getTextureId() >= 0 && getWidth() > 1 && getHeight() > 1;
+    }
 
-    void pause(boolean pause);
+    default void stop() {
+    }
 
-    boolean isPaused();
+    default void pause(boolean pause) {
+    }
 
-    void setVolume(int volume);
+    default boolean isPaused() {
+        return false;
+    }
 
-    boolean canSetProgress();
+    default void setVolume(int volume) {
+    }
 
-    void setProgress(long progress);
+    default boolean canSetProgress() {
+        return false;
+    }
 
-    long getProgress();
+    default void setProgress(long progress) {
+    }
 
-    long getTotalProgress();
+    default long getProgress() {
+        return 0;
+    }
 
-    void setTargetTime(long targetTime);
+    default long getTotalProgress() {
+        return 0;
+    }
+
+    default void setTargetTime(long targetTime) {
+    }
 
     default void swapTexture() {
     }
 
-    void updateTexture();
+    default void updateTexture() {
+    }
 
     default boolean isPostUpdate() {
         return false;
@@ -71,53 +89,27 @@ public interface IVideoPlayer {
         return false;
     }
 
-    default void draw(MatrixStack matrices, VertexConsumerProvider.Immediate immediate, ClientVideoScreen s) {
-        ClientVideoScreen screen = screen();
-        if (screen == null || screen.player == null) return;
-        Vector3f p1 = s.p1, p2 = s.p2, p3 = s.p3, p4 = s.p4;
-        float sx = p1.sub(p4, tmp1).length() / (getWidth() * Math.abs(s.u1 - s.u2)) * s.scaleX;
-        float sy = p1.sub(p2, tmp1).length() / (getHeight() * Math.abs(s.v1 - s.v2)) * s.scaleY;
-        boolean fx = flippedX();
-        boolean fy = flippedY();
-        matrices.push();
-        matrices.translate(-ScreenRenderer.cameraX, -ScreenRenderer.cameraY, -ScreenRenderer.cameraZ);
-        Matrix4f mat = matrices.peek().getPositionMatrix();
-        matrices.pop();
-        RenderLayer layer = ScreenRenderer.getLayer(getTextureId());
-        VertexConsumer consumer = immediate.getBuffer(layer);
-        boolean vertical = false;
-        float scale = 1;
-        if (!s.fill) {
-            if (sx < sy) {
-                scale = sx / sy;
-                vertical = true;
-            } else {
-                scale = sy / sx;
-            }
-        }
-        if (scale == 1) {
-            draw(mat, consumer, p1, p2, p3, p4, fx ? s.u2 : s.u1, fy ? s.v2 : s.v1, fx ? s.u1 : s.u2, fy ? s.v1 : s.v2);
-            return;
-        }
-        float inv = (1 - scale) / 2;
-        if (vertical) {
-            draw(mat, consumer, s, p1, p2, p1, p2, fx, fy, inv, p3.lerp(p4, inv, tmp3), p4.lerp(p3, inv, tmp4));
-        } else {
-            draw(mat, consumer, s, p1, p2, p3, p4, fx, fy, inv, p3.lerp(p2, inv, tmp3), p4.lerp(p1, inv, tmp4));
-        }
-        immediate.draw(layer);
+    default void draw(MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen s) {
+        VideoPlayerRenderer.draw(this, matrices, consumers, s);
     }
 
-    private void draw(Matrix4f mat, VertexConsumer consumer, ClientVideoScreen s, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, boolean fx, boolean fy, float inv, Vector3f lerp, Vector3f lerp2) {
-        draw(mat, consumer, p1.lerp(p4, inv, tmp1), p2.lerp(p3, inv, tmp2), lerp, lerp2, fx ? s.u2 : s.u1, fy ? s.v2 : s.v1, fx ? s.u1 : s.u2, fy ? s.v1 : s.v2);
+    default void drawVertex(Matrix4f mat, VertexConsumer consumer, Vector3f vertex, Vector2f uv, ClientVideoScreen target) {
+        drawVertex(mat, consumer, vertex, uv);
     }
 
-    default void draw(Matrix4f mat, VertexConsumer consumer, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, float u1, float v1, float u2, float v2) {
-        int gray = (int) (config.brightness / 100.0 * 255);
-        int color = 0xFF000000 | (gray << 16) | (gray << 8) | gray;
-        consumer.vertex(mat, p1.x, p1.y, p1.z).texture(u1, v1).color(color);
-        consumer.vertex(mat, p2.x, p2.y, p2.z).texture(u1, v2).color(color);
-        consumer.vertex(mat, p3.x, p3.y, p3.z).texture(u2, v2).color(color);
-        consumer.vertex(mat, p4.x, p4.y, p4.z).texture(u2, v1).color(color);
+    default void drawVertex(Matrix4f mat, VertexConsumer consumer, Vector3f vertex, Vector2f uv, Vector3f normal, ClientVideoScreen target) {
+        drawVertex(mat, consumer, vertex, uv, normal);
+    }
+
+    default void drawVertex(Matrix4f mat, VertexConsumer consumer, Vector3f vertex, Vector2f uv) {
+        VideoPlayerRenderer.drawVertex(mat, consumer, vertex, uv.x, uv.y);
+    }
+
+    default void drawVertex(Matrix4f mat, VertexConsumer consumer, Vector3f vertex, Vector2f uv, Vector3f normal) {
+        VideoPlayerRenderer.drawVertex(mat, consumer, vertex, uv.x, uv.y, normal);
+    }
+
+    default void drawQuad(Matrix4f mat, VertexConsumer consumer, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, float u1, float v1, float u2, float v2) {
+        VideoPlayerRenderer.drawQuad(mat, consumer, p1, p2, p3, p4, u1, v1, u2, v2);
     }
 }

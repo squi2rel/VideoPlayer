@@ -1,5 +1,6 @@
 plugins {
 	id 'fabric-loom' version "${loom_version}"
+	id 'com.gradleup.shadow' version '9.2.2'
 	id 'maven-publish'
 }
 
@@ -11,6 +12,7 @@ base {
 }
 
 repositories {
+	mavenCentral()
 	// Add repositories to retrieve artifacts from in here.
 	// You should only use this when depending on other mods because
 	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
@@ -27,6 +29,20 @@ repositories {
 			includeGroup "maven.modrinth"
 		}
 	}
+}
+
+subprojects {
+	repositories {
+		mavenCentral()
+		maven {
+			name = "Fabric"
+			url = "https://maven.fabricmc.net/"
+		}
+	}
+}
+
+configurations {
+	shadowBundle
 }
 
 loom {
@@ -50,11 +66,21 @@ dependencies {
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-	implementation "uk.co.caprica:vlcj:4.10.1"
-	include "uk.co.caprica:vlcj:4.10.1"
-	include "uk.co.caprica:vlcj-natives:4.8.3"
+	implementation "net.java.dev.jna:jna:5.17.0"
+	implementation "org.brotli:dec:0.1.2"
+	include "org.brotli:dec:0.1.2"
+	implementation "com.google.zxing:core:3.5.3"
+	include "com.google.zxing:core:3.5.3"
 
-    modApi "maven.modrinth:vivecraft:1.21.4-1.3.0-fabric"
+	implementation project(":mcng-core")
+	implementation project(path: ":mcng-fabric-client", configuration: "namedElements")
+	shadowBundle project(":mcng-core")
+	shadowBundle project(path: ":mcng-fabric-client", configuration: "namedElements")
+
+	modCompileOnly "maven.modrinth:modmenu:${project.modmenu_version}"
+	modApi "maven.modrinth:vivecraft:1.21.11-1.3.9-fabric"
+	runtimeOnly "com.electronwill.night-config:core:3.6.6"
+	runtimeOnly "com.electronwill.night-config:toml:3.6.6"
 }
 
 processResources {
@@ -85,6 +111,18 @@ jar {
 	from("LICENSE") {
 		rename { "${it}_${inputs.properties.archivesName}"}
 	}
+}
+
+shadowJar {
+	archiveClassifier = "dev-shadow"
+	configurations = [project.configurations.shadowBundle]
+	from sourceSets.client.output
+	relocate "com.github.squi2rel.mcng", "com.github.squi2rel.vp.shadow.mcng"
+}
+
+remapJar {
+	dependsOn shadowJar
+	inputFile.set(shadowJar.archiveFile)
 }
 
 // configure the maven publication

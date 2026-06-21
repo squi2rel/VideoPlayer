@@ -1,9 +1,9 @@
 package com.github.squi2rel.vp.video;
 
-import com.github.squi2rel.vp.provider.VideoInfo;
 import net.minecraft.client.render.VertexConsumer;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
+import org.joml.Vector2f;
 import org.joml.Vector3f;
 
 public record ClonePlayer(ClientVideoScreen screen, ClientVideoScreen source) implements IVideoPlayer {
@@ -18,48 +18,18 @@ public record ClonePlayer(ClientVideoScreen screen, ClientVideoScreen source) im
     }
 
     @Override
-    public boolean canPause() {
-        return false;
-    }
-
-    @Override
-    public void play(VideoInfo info) {
-    }
-
-    @Override
-    public void cleanup() {
-    }
-
-    @Override
     public int getTextureId() {
         return source.player.getTextureId();
     }
 
     @Override
+    public boolean hasVideoFrame() {
+        return source.player != null && source.player.hasVideoFrame();
+    }
+
+    @Override
     public void stop() {
         if (source.player != null) source.player.stop();
-    }
-
-    @Override
-    public void pause(boolean pause) {
-    }
-
-    @Override
-    public boolean isPaused() {
-        return false;
-    }
-
-    @Override
-    public void setVolume(int volume) {
-    }
-
-    @Override
-    public boolean canSetProgress() {
-        return false;
-    }
-
-    @Override
-    public void setProgress(long progress) {
     }
 
     @Override
@@ -73,14 +43,6 @@ public record ClonePlayer(ClientVideoScreen screen, ClientVideoScreen source) im
     }
 
     @Override
-    public void setTargetTime(long targetTime) {
-    }
-
-    @Override
-    public void init() {
-    }
-
-    @Override
     public int getWidth() {
         return source.player.getWidth();
     }
@@ -91,17 +53,30 @@ public record ClonePlayer(ClientVideoScreen screen, ClientVideoScreen source) im
     }
 
     @Override
-    public void updateTexture() {
+    public boolean flippedX() {
+        return source.player != null && source.player.flippedX();
     }
 
     @Override
-    public void draw(Matrix4f mat, VertexConsumer consumer, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, float u1, float v1, float u2, float v2) {
-        if (source.player instanceof VideoPlayer p && p.is3d) {
-            p.draw3D(mat, consumer, p1, p2, p3, p4, u1, v1, u2, v2);
-            return;
-        }
-        boolean fx = source.player.flippedX();
-        boolean fy = source.player.flippedY();
-        IVideoPlayer.super.draw(mat, consumer, p1, p2, p3, p4, fx ? u2 : u1, fy ? v2 : v1, fx ? u1 : u2, fy ? v1 : v2);
+    public boolean flippedY() {
+        return source.player != null && source.player.flippedY();
+    }
+
+    @Override
+    public void drawQuad(Matrix4f mat, VertexConsumer consumer, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, float u1, float v1, float u2, float v2) {
+        if (source.player == null) return;
+        source.player.drawQuad(mat, consumer, p1, p2, p3, p4, u1, v1, u2, v2);
+    }
+
+    @Override
+    public void drawVertex(Matrix4f mat, VertexConsumer consumer, Vector3f vertex, Vector2f uv, ClientVideoScreen target) {
+        if (source.player == null) return;
+        source.player.drawVertex(mat, consumer, vertex, uv, target);
+    }
+
+    @Override
+    public void drawVertex(Matrix4f mat, VertexConsumer consumer, Vector3f vertex, Vector2f uv, Vector3f normal, ClientVideoScreen target) {
+        if (source.player == null) return;
+        source.player.drawVertex(mat, consumer, vertex, uv, normal, target);
     }
 }

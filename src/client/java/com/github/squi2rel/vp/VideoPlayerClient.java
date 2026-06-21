@@ -1,13 +1,25 @@
 package com.github.squi2rel.vp;
 
-import com.github.squi2rel.vp.network.PacketID;
 import com.github.squi2rel.vp.network.VideoPayload;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.VideoProviders;
+import com.github.squi2rel.vp.provider.YouTubeProvider;
+import com.github.squi2rel.vp.provider.bilibili.BiliBiliProvider;
+import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
+import com.github.squi2rel.vp.creation.StartupGuideScreen;
+import com.github.squi2rel.vp.creation.VideoCreationEditor;
+import com.github.squi2rel.vp.creation.BiliLoginScreen;
+import com.github.squi2rel.vp.creation.MpvFilterGraphScreen;
+import com.github.squi2rel.vp.danmaku.BiliAuthRefresher;
+import com.github.squi2rel.vp.danmaku.BiliCookie;
+import com.github.squi2rel.vp.danmaku.ClientDanmakuController;
+import com.github.squi2rel.vp.danmaku.ClientDanmakuRenderer;
+import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.video.*;
 import com.github.squi2rel.vp.vivecraft.Vivecraft;
 import com.google.gson.Gson;
 import com.mojang.brigadier.arguments.*;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.mojang.brigadier.suggestion.Suggestions;
@@ -17,10 +29,11 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.hud.ClientBossBar;
@@ -51,7 +64,7 @@ import static com.github.squi2rel.vp.VideoPlayerMain.error;
 
 @SuppressWarnings({"DataFlowIssue"})
 public class VideoPlayerClient implements ClientModInitializer {
-    public static final Path configPath = FabricLoader.getInstance().getConfigDir().resolve("videoplayer-client.json");
+    public static final Path configPath = FabricLoader.getInstance().getConfigDir().resolve("videoplayer").resolve("videoplayer-client.json");
     public static final MinecraftClient client = MinecraftClient.getInstance();
     public static Config config;
     private static final Gson gson = new Gson();
@@ -64,6 +77,10 @@ public class VideoPlayerClient implements ClientModInitializer {
     private static BossBar bossBar = null;
     private static boolean bossBarAdded = false;
     private static boolean keyPressed = false;
+    private static boolean startupGuideOpened = false;
+    private static boolean pendingStartupGuideScreen = false;
+    private static boolean pendingBiliLoginScreen = false;
+    private static boolean pendingMpvFilterGraphScreen = false;
 
     public static boolean connected = false;
     public static String remoteControlName = "minecraft:iron_ingot";
@@ -111,40 +128,44 @@ public class VideoPlayerClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         if (error != null) {
-            ClientPlayConnectionEvents.JOIN.register((h, s, c) -> c.player.sendMessage(Text.literal("VideoPlayer错误: libVLC库加载失败\n" + error + "\n查看日志获取更多信息").formatted(Formatting.RED), false));
+            ClientPlayConnectionEvents.JOIN.register((h, s, c) -> c.player.sendMessage(VpTexts.tr(
+                    "message.videoplayer.backend_load_failed",
+                    "VideoPlayer error: video backend failed to load\n%s\nSee logs for more information",
+                    error
+            ).formatted(Formatting.RED), false));
         }
-        VlcDecoder.load();
         loadConfig();
+        BiliBiliProvider.setCookieSupplier(BiliCookie::header);
+        BiliAuthRefresher.checkOnStartup();
+        ClientTickEvents.END_CLIENT_TICK.register(client -> BiliAuthRefresher.tick());
+        registerStartupGuide();
+        registerStartupGuideScreenOpener();
+        registerBiliLoginScreenOpener();
+        registerMpvFilterGraphScreenOpener();
         VideoProviders.register();
-        disconnectHandler = () -> client.execute(() -> {
-            connected = false;
-            for (ClientVideoArea area : areas.values()) {
-                area.remove();
-            }
-            areas.clear();
-            for (ClientVideoScreen screen : screens) {
-                screen.cleanup();
-            }
-            screens.clear();
-            currentLooking = null;
-        });
+        disconnectHandler = () -> client.execute(VideoPlayerClient::cleanupClientState);
+        ClientLifecycleEvents.CLIENT_STOPPING.register(ignored -> cleanupClientState());
         if (Vivecraft.loaded) LOGGER.info("Found Vivecraft");
         ClientPlayConnectionEvents.JOIN.register((h, s, c) -> {
             if (config.alwaysConnected) ClientPacketHandler.config(VideoPlayerMain.version);
         });
-        WorldRenderEvents.AFTER_SETUP.register(e -> VideoPlayerClient.update());
+        WorldRenderEvents.START_MAIN.register(e -> VideoPlayerClient.update());
         WorldRenderEvents.AFTER_ENTITIES.register(ScreenRenderer::render);
-        WorldRenderEvents.END.register(e -> VideoPlayerClient.postUpdate());
-        ClientPlayNetworking.registerGlobalReceiver(VideoPayload.ID, (p, c) -> client.execute(() -> {
-            ByteBuf buf = Unpooled.wrappedBuffer(p.data());
-            try {
-                ClientPacketHandler.handle(buf);
-            } catch (Exception e) {
-                LOGGER.error("Exception while handling packet", e);
-            } finally {
-                buf.release();
-            }
-        }));
+        WorldRenderEvents.END_MAIN.register(e -> VideoPlayerClient.postUpdate());
+        VideoCreationEditor.register();
+        ClientPlayNetworking.registerGlobalReceiver(VideoPayload.ID, (p, c) -> {
+            long receivedAt = System.currentTimeMillis();
+            client.execute(() -> {
+                ByteBuf buf = Unpooled.wrappedBuffer(p.data());
+                try {
+                    ClientPacketHandler.handle(buf, receivedAt);
+                } catch (Exception e) {
+                    LOGGER.error("Exception while handling packet", e);
+                } finally {
+                    buf.release();
+                }
+            });
+        });
         ClientCommandRegistrationCallback.EVENT.register((d, c) -> d.register(ClientCommandManager.literal("vlc")
                 .then(ClientCommandManager.literal("play")
                         .then(ClientCommandManager.argument("url", StringArgumentType.greedyString())
@@ -192,12 +213,33 @@ public class VideoPlayerClient implements ClientModInitializer {
                                     int v = s.getArgument("volume", Integer.class);
                                     config.volume = v;
                                     saveConfig();
-                                    s.getSource().sendFeedback(Text.literal("音量已设置为 " + v + "%").formatted(Formatting.GREEN));
-                                    ClientVideoScreen first = screens.stream().filter(cs -> cs.player instanceof VideoPlayer).findAny().orElse(null);
-                                    if (first == null) return 1;
-                                    first.player.setVolume(v);
+                                    s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.volume_set", "Volume set to %s%%", v).formatted(Formatting.GREEN));
+                                    applyConfiguredVolume();
                                     return 1;
                                 })))
+                .then(ClientCommandManager.literal("backend")
+                        .then(ClientCommandManager.literal(VideoBackends.VLC)
+                                .executes(s -> setVideoBackend(s, VideoBackends.VLC)))
+                        .then(ClientCommandManager.literal(VideoBackends.MPV)
+                                .executes(s -> setVideoBackend(s, VideoBackends.MPV)))
+                        .executes(s -> {
+                            s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.current_backend", "Current playback backend: %s", VideoBackends.normalize(config.videoBackend)).formatted(Formatting.GREEN));
+                            return 1;
+                        }))
+                .then(ClientCommandManager.literal("boot")
+                        .executes(VideoPlayerClient::openStartupGuide))
+                .then(ClientCommandManager.literal("mpvFilter")
+                        .executes(VideoPlayerClient::openMpvFilterGraph))
+                .then(biliAuthCommand("biliAuth"))
+                .then(ClientCommandManager.literal("danmaku")
+                        .executes(s -> {
+                            if (checkInvalid(s, false)) return 0;
+                            boolean enabled = ClientDanmakuController.toggleGlobal();
+                            s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.danmaku_state", "Danmaku: %s",
+                                    (enabled ? VpTexts.tr("label.videoplayer.on", "On") : VpTexts.tr("label.videoplayer.off", "Off")).getString()
+                            ).formatted(Formatting.GREEN));
+                            return 1;
+                        }))
                 .then(ClientCommandManager.literal("createArea")
                         .then(ClientCommandManager.argument("x1", FloatArgumentType.floatArg())
                         .then(ClientCommandManager.argument("y1", FloatArgumentType.floatArg())
@@ -286,7 +328,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                                             String screenName = s.getArgument("name", String.class);
                                             VideoScreen screen = area.getScreen(screenName);
                                             if (screen == null) {
-                                                s.getSource().sendFeedback(Text.of("没有名为 " + screenName + " 的屏幕"));
+                                                s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.screen_named_not_found", "No screen named %s", screenName));
                                                 return 0;
                                             }
                                             ClientPacketHandler.removeScreen(screen);
@@ -303,11 +345,12 @@ public class VideoPlayerClient implements ClientModInitializer {
                         .executes(s -> {
                             if (checkInvalid(s, true)) return 0;
                             String str = currentScreen.getScreen().infos.stream()
-                                    .map(i -> String.format("%s 请求玩家: %s", i.name(), i.playerName()))
+                                    .map(i -> VpTexts.tr("message.videoplayer.queue_item", "%s requested by: %s", i.name(), i.playerName()).getString())
                                     .collect(Collectors.joining("\n"));
-                            s.getSource().sendFeedback(Text.literal("观影区 %s 屏幕 %s\n%s".formatted(
-                                    currentScreen.area.name, currentScreen.name, str.isEmpty() ? "队列无视频" : str
-                            )).formatted(Formatting.GOLD));
+                            s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.queue_list", "Video area %s screen %s\n%s",
+                                    currentScreen.area.name, currentScreen.name,
+                                    str.isEmpty() ? VpTexts.tr("message.videoplayer.queue_empty", "Queue is empty").getString() : str
+                            ).formatted(Formatting.GOLD));
                             return 1;
                         }))
                 .then(ClientCommandManager.literal("sync")
@@ -316,18 +359,11 @@ public class VideoPlayerClient implements ClientModInitializer {
                             ClientPacketHandler.sync(currentScreen);
                             return 1;
                         }))
-                .then(ClientCommandManager.literal("idleplay")
-                        .then(ClientCommandManager.argument("url", StringArgumentType.greedyString())
-                                .executes(s -> {
-                                    if (checkInvalid(s, true)) return 0;
-                                    ClientPacketHandler.idlePlay(currentScreen, s.getArgument("url", String.class));
-                                    return 1;
-                                })))
                 .then(ClientCommandManager.literal("brightness")
                         .then(ClientCommandManager.argument("brightness", IntegerArgumentType.integer(0, 100))
                                 .executes(s -> {
                                     config.brightness = s.getArgument("brightness", Integer.class);
-                                    s.getSource().sendFeedback(Text.literal("亮度已设置为 " + config.brightness + "%").formatted(Formatting.GREEN));
+                                    s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.brightness_set", "Brightness set to %s%%", config.brightness).formatted(Formatting.GREEN));
                                     saveConfig();
                                     return 1;
                                 })))
@@ -348,7 +384,8 @@ public class VideoPlayerClient implements ClientModInitializer {
                 .then(ClientCommandManager.literal("stop")
                         .executes(s -> {
                             if (checkInvalid(s, true)) return 0;
-                            currentScreen.player.stop();
+                            currentScreen.clearPlaybackState();
+                            if (currentScreen.player != null) currentScreen.player.stop();
                             return 1;
                         }))
                 .then(ClientCommandManager.literal("setmeta")
@@ -359,7 +396,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                                                         .executes(s -> {
                                                             ClientVideoScreen screen = getScreen(s);
                                                             if (screen == null) return 0;
-                                                            ClientPacketHandler.setMeta(screen, PacketID.Action.MUTE.ordinal(), s.getArgument("mute", Boolean.class) ? 1 : 0);
+                                                            ClientPacketHandler.setMetadata(screen, "mute", MetaValue.ofBool(s.getArgument("mute", Boolean.class)));
                                                             return 1;
                                                         })))
                                         .then(ClientCommandManager.literal("interactable")
@@ -367,24 +404,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                                                         .executes(s -> {
                                                             ClientVideoScreen screen = getScreen(s);
                                                             if (screen == null) return 0;
-                                                            ClientPacketHandler.setMeta(screen, PacketID.Action.INTERACTABLE.ordinal(), s.getArgument("interactable", Boolean.class) ? 1 : 0);
-                                                            return 1;
-                                                        })))
-                                        .then(ClientCommandManager.literal("aspect")
-                                                .then(ClientCommandManager.argument("aspect", FloatArgumentType.floatArg(0.0625f, 16f))
-                                                        .executes(s -> {
-                                                            ClientVideoScreen screen = getScreen(s);
-                                                            if (screen == null) return 0;
-                                                            float aspect = s.getArgument("aspect", Float.class);
-                                                            ClientPacketHandler.setMeta(screen, PacketID.Action.ASPECT.ordinal(), Float.floatToIntBits(aspect));
-                                                            return 1;
-                                                        })))
-                                        .then(ClientCommandManager.literal("fov")
-                                                .then(ClientCommandManager.argument("fov", IntegerArgumentType.integer(1, 179))
-                                                        .executes(s -> {
-                                                            ClientVideoScreen screen = getScreen(s);
-                                                            if (screen == null) return 0;
-                                                            ClientPacketHandler.setMeta(screen, PacketID.Action.FOV.ordinal(), s.getArgument("fov", Integer.class));
+                                                            ClientPacketHandler.setMetadata(screen, "interactable", MetaValue.ofBool(s.getArgument("interactable", Boolean.class)));
                                                             return 1;
                                                         })))
                                         .then(ClientCommandManager.literal("autoSync")
@@ -392,7 +412,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                                                         .executes(s -> {
                                                             ClientVideoScreen screen = getScreen(s);
                                                             if (screen == null) return 0;
-                                                            ClientPacketHandler.setMeta(screen, PacketID.Action.AUTO_SYNC.ordinal(), s.getArgument("autoSync", Boolean.class) ? 1 : 0);
+                                                            ClientPacketHandler.setMetadata(screen, "autoSync", MetaValue.ofBool(s.getArgument("autoSync", Boolean.class)));
                                                             return 1;
                                                         })))
                                         .then(ClientCommandManager.literal("custom")
@@ -402,7 +422,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                                                                         .executes(s -> {
                                                                             ClientVideoScreen screen = getScreen(s);
                                                                             if (screen == null) return 0;
-                                                                            ClientPacketHandler.setCustomMeta(screen, s.getArgument("key", String.class), s.getArgument("value", Integer.class), false);
+                                                                            ClientPacketHandler.setMetadata(screen, s.getArgument("key", String.class), MetaValue.ofInt(s.getArgument("value", Integer.class)));
                                                                             return 1;
                                                                         }))))
                                                 .then(ClientCommandManager.literal("get")
@@ -411,7 +431,8 @@ public class VideoPlayerClient implements ClientModInitializer {
                                                                     ClientVideoScreen screen = getScreen(s);
                                                                     if (screen == null) return 0;
                                                                     String key = s.getArgument("key", String.class);
-                                                                    s.getSource().sendFeedback(Text.of(key + "=" + screen.meta.getOrDefault(key, null)));
+                                                                    MetaValue value = screen.metadata.get(key);
+                                                                    s.getSource().sendFeedback(Text.of(key + "=" + (value == null ? "null" : value.toDisplayString())));
                                                                     return 1;
                                                                 })))
                                                 .then(ClientCommandManager.literal("remove")
@@ -419,14 +440,14 @@ public class VideoPlayerClient implements ClientModInitializer {
                                                                 .executes(s -> {
                                                                     ClientVideoScreen screen = getScreen(s);
                                                                     if (screen == null) return 0;
-                                                                    ClientPacketHandler.setCustomMeta(screen, s.getArgument("key", String.class), -1, true);
+                                                                    ClientPacketHandler.removeMetadata(screen, s.getArgument("key", String.class));
                                                                     return 1;
                                                                 })))
                                                 .then(ClientCommandManager.literal("list")
                                                         .executes(s -> {
                                                             ClientVideoScreen screen = getScreen(s);
                                                             if (screen == null) return 0;
-                                                            s.getSource().sendFeedback(Text.of(screen.meta.toString()));
+                                                            s.getSource().sendFeedback(Text.of(screen.metadata.entries().toString()));
                                                             return 1;
                                                         })))
                                 )))
@@ -458,7 +479,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             if (pressed && !keyPressed) {
                 keyPressed = true;
                 if (remoteControl || client.player.getStackInHand(Hand.MAIN_HAND).isEmpty() && client.player.getStackInHand(Hand.OFF_HAND).isEmpty()) {
-                    ClientPacketHandler.openMenu(currentLooking);
+                    VideoCreationEditor.instance().openConfigScreen(currentLooking);
                 }
             } else if (!pressed) {
                 keyPressed = false;
@@ -467,12 +488,66 @@ public class VideoPlayerClient implements ClientModInitializer {
         bossBar = new ClientBossBar(UUID.randomUUID(), Text.of(""), 0, BossBar.Color.WHITE, BossBar.Style.PROGRESS, false, false, false);
     }
 
+    private static LiteralArgumentBuilder<FabricClientCommandSource> biliAuthCommand(String literal) {
+        return ClientCommandManager.literal(literal)
+                .then(ClientCommandManager.literal("login")
+                        .executes(VideoPlayerClient::openBiliLogin))
+                .then(ClientCommandManager.literal("set")
+                        .then(ClientCommandManager.argument("cookie", StringArgumentType.greedyString())
+                                .executes(s -> {
+                                    BiliCookie.set(s.getArgument("cookie", String.class));
+                                    s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.bilibili_cookie_saved", "Bilibili auth saved locally").formatted(Formatting.GREEN));
+                                    return 1;
+                                })))
+                .then(ClientCommandManager.literal("clear")
+                        .executes(s -> {
+                            BiliCookie.clear();
+                            s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.bilibili_cookie_cleared", "Bilibili auth cleared").formatted(Formatting.GREEN));
+                            return 1;
+                        }))
+                .then(ClientCommandManager.literal("status")
+                        .executes(s -> {
+                            s.getSource().sendFeedback(VpTexts.text(BiliCookie.status()).formatted(Formatting.GREEN));
+                            return 1;
+                        }));
+    }
+
+    private static int openBiliLogin(CommandContext<FabricClientCommandSource> s) {
+        pendingBiliLoginScreen = true;
+        return 1;
+    }
+
+    private static int openStartupGuide(CommandContext<FabricClientCommandSource> s) {
+        pendingStartupGuideScreen = true;
+        return 1;
+    }
+
+    private static int openMpvFilterGraph(CommandContext<FabricClientCommandSource> s) {
+        pendingMpvFilterGraphScreen = true;
+        return 1;
+    }
+
+    private static int setVideoBackend(CommandContext<FabricClientCommandSource> s, String backend) {
+        config.videoBackend = VideoBackends.normalize(backend);
+        saveConfig();
+        if (VideoBackends.MPV.equals(config.videoBackend) && !MpvVideoBackend.isAvailable()) {
+            LOGGER.warn("MPV backend selected but libmpv is not available", MpvVideoBackend.loadError());
+            s.getSource().sendFeedback(VpTexts.tr(
+                    "message.videoplayer.backend_mpv_unavailable",
+                    "Playback backend set to MPV, but libmpv failed to load on this system. New videos will fall back to VLC. Install system libmpv."
+            ).formatted(Formatting.YELLOW));
+            return 1;
+        }
+        s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.backend_set", "Playback backend set to %s. Only newly started videos are affected.", config.videoBackend).formatted(Formatting.GREEN));
+        return 1;
+    }
+
     private ClientVideoArea getArea(CommandContext<FabricClientCommandSource> s) {
         if (checkInvalid(s, false)) return null;
         String name = s.getArgument("area", String.class);
         ClientVideoArea area = areas.get(name);
         if (area == null) {
-            s.getSource().sendFeedback(Text.literal("没有名为 " + name + " 的观影区").formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.area_named_not_found", "No video area named %s", name).formatted(Formatting.RED));
             return null;
         }
         return area;
@@ -485,7 +560,7 @@ public class VideoPlayerClient implements ClientModInitializer {
         String name = s.getArgument("screen", String.class);
         ClientVideoScreen screen = area.getScreen(name);
         if (screen == null) {
-            s.getSource().sendFeedback(Text.literal("屏幕未找到").formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.screen_not_found", "Screen not found").formatted(Formatting.RED));
             return null;
         }
         return screen;
@@ -493,14 +568,14 @@ public class VideoPlayerClient implements ClientModInitializer {
 
     private boolean checkInvalid(CommandContext<FabricClientCommandSource> s, boolean checkScreen) {
         if (!connected && !config.alwaysConnected) {
-            s.getSource().sendFeedback(Text.literal("未连接到服务器").formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").formatted(Formatting.RED));
             return true;
         }
         if (checkScreen && currentScreen == null) {
             if (isInArea) {
-                s.getSource().sendFeedback(Text.literal("当前观影区没有主屏幕").formatted(Formatting.RED));
+                s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.current_area_no_main_screen", "Current video area has no main screen").formatted(Formatting.RED));
             } else {
-                s.getSource().sendFeedback(Text.literal("当前没有在观影区内").formatted(Formatting.RED));
+                s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_inside_area", "You are not inside a video area").formatted(Formatting.RED));
             }
             return true;
         }
@@ -509,11 +584,11 @@ public class VideoPlayerClient implements ClientModInitializer {
 
     private boolean checkInvalidLooking(CommandContext<FabricClientCommandSource> s) {
         if (!connected && !config.alwaysConnected) {
-            s.getSource().sendFeedback(Text.literal("未连接到服务器").formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").formatted(Formatting.RED));
             return true;
         }
         if (currentLooking == null) {
-            s.getSource().sendFeedback(Text.literal("当前没有看向屏幕").formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_looking_at_screen", "You are not looking at a screen").formatted(Formatting.RED));
             return true;
         }
         return false;
@@ -527,7 +602,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                 bossBarAdded = true;
             }
             ClientVideoScreen screen = currentLooking.getScreen();
-            VideoInfo info = screen.infos.peek();
+            VideoInfo info = screen.currentDisplayInfo();
             if (info != null && screen.player != null) {
                 String name = info.name();
                 long progress = System.currentTimeMillis() - screen.getStartTime();
@@ -543,7 +618,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                 }
                 bossBar.setName(Text.of(name + " " + time));
             } else {
-                bossBar.setName(Text.of("无"));
+                bossBar.setName(VpTexts.tr("label.videoplayer.none", "None"));
                 bossBar.setPercent(1);
             }
             handler.onBossBar(BossBarS2CPacket.updateName(bossBar));
@@ -567,14 +642,14 @@ public class VideoPlayerClient implements ClientModInitializer {
             return;
         }
 
-        float delta = VideoPlayerClient.client.getRenderTickCounter().getTickDelta(true);
+        float delta = VideoPlayerClient.client.getRenderTickCounter().getTickProgress(true);
         Vec3d eyePos = client.player.getCameraPosVec(delta);
         Vec3d lookVec = client.player.getRotationVec(delta);
 
         Vector3f lineStart = new Vector3f(eyePos.toVector3f());
 
         remoteControl = false;
-        for (ItemStack item : client.player.getHandItems()) {
+        for (ItemStack item : List.of(client.player.getMainHandStack(), client.player.getOffHandStack())) {
             if (!Registries.ITEM.getId(item.getItem()).toString().equals(remoteControlName)) continue;
             CustomModelDataComponent data = item.getComponents().get(DataComponentTypes.CUSTOM_MODEL_DATA);
             if (data == null) continue;
@@ -640,6 +715,24 @@ public class VideoPlayerClient implements ClientModInitializer {
         profiler.pop();
     }
 
+    private static void cleanupClientState() {
+        connected = false;
+        for (ClientVideoArea area : new ArrayList<>(areas.values())) {
+            area.remove();
+        }
+        areas.clear();
+        for (ClientVideoScreen screen : new ArrayList<>(screens)) {
+            screen.cleanup();
+        }
+        screens.clear();
+        ScreenVolumeCache.clear();
+        ClientDanmakuRenderer.clearCache();
+        Degree360Player.clearMeshCache();
+        ClientPermissionCache.clear();
+        currentLooking = null;
+        VideoCreationEditor.instance().clear();
+    }
+
     public static void postUpdate() {
         if (updated) return;
         updated = true;
@@ -667,25 +760,143 @@ public class VideoPlayerClient implements ClientModInitializer {
         }
     }
 
-    private static void saveConfig() {
+    public static void saveConfig() {
         try {
+            applyNativePlatformConfig();
+            Files.createDirectories(configPath.getParent());
             Files.writeString(configPath, gson.toJson(config));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private static void loadConfig() {
-        try {
-            config = gson.fromJson(Files.readString(configPath), Config.class);
-        } catch (Exception e) {
-            config = new Config();
-            try {
-                saveConfig();
-            } catch (Exception e1) {
-                e1.addSuppressed(e);
-                throw new RuntimeException(e);
+    public static void reloadConfig() {
+        loadConfig();
+    }
+
+    public static void markStartupGuideShown() {
+        if (config == null) return;
+        config.startupGuideShown = true;
+        saveConfig();
+    }
+
+    public static void applyNativePlatformConfig() {
+        if (config == null) return;
+        config.nativeVlcPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(config.nativeVlcPlatform);
+        config.nativeMpvPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(config.nativeMpvPlatform);
+        NativePackageManager.selectPlatform(NativePackageManager.BACKEND_VLC, config.nativeVlcPlatform);
+        NativePackageManager.selectPlatform(NativePackageManager.BACKEND_MPV, config.nativeMpvPlatform);
+        StreamListener.configureProxy(config.nativeDownloadProxy);
+        YouTubeProvider.configureProxy(config.nativeDownloadProxy);
+        StreamListener.configureYtdlPath(config.mpvYtdlPath);
+        YouTubeProvider.configureYtdlPath(config.mpvYtdlPath);
+    }
+
+    public static NativeDownloadConfig nativeDownloadConfig() {
+        if (config == null) {
+            return NativeDownloadConfig.load();
+        }
+        if (config.nativeDownloadUrls == null) {
+            config.nativeDownloadUrls = NativeDownloadConfig.load();
+        }
+        return config.nativeDownloadUrls;
+    }
+
+    public static void applyConfiguredVolume() {
+        config.volume = Math.clamp(config.volume, 0, 100);
+        for (ClientVideoScreen screen : screens) {
+            if (screen.player instanceof VideoPlayer player && VideoBackends.VLC.equals(player.backendName())) {
+                player.setVolume(config.volume);
             }
         }
+    }
+
+    private static void loadConfig() {
+        boolean existed = Files.exists(configPath);
+        boolean changed = false;
+        try {
+            config = gson.fromJson(Files.readString(configPath), Config.class);
+            if (config == null) config = new Config();
+        } catch (Exception e) {
+            config = new Config();
+            changed = true;
+        }
+        config.nativeDownloadUrls = NativeDownloadConfig.load();
+        if (config.startupGuideShown == null) {
+            config.startupGuideShown = existed;
+            changed = true;
+        }
+        config.videoBackend = VideoBackends.normalize(config.videoBackend);
+        String nativeVlcPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(config.nativeVlcPlatform);
+        if (!Objects.equals(config.nativeVlcPlatform, nativeVlcPlatform)) {
+            config.nativeVlcPlatform = nativeVlcPlatform;
+            changed = true;
+        }
+        String nativeMpvPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(config.nativeMpvPlatform);
+        if (!Objects.equals(config.nativeMpvPlatform, nativeMpvPlatform)) {
+            config.nativeMpvPlatform = nativeMpvPlatform;
+            changed = true;
+        }
+        if (config.nativeDownloadProxy == null) {
+            config.nativeDownloadProxy = "";
+            changed = true;
+        }
+        if (config.mpvYtdlPath == null) {
+            config.mpvYtdlPath = "";
+            changed = true;
+        }
+        applyNativePlatformConfig();
+        config.volume = Math.clamp(config.volume, 0, 100);
+        config.brightness = Math.clamp(config.brightness, 0, 100);
+        config.danmakuRollingRangePercent = switch (config.danmakuRollingRangePercent) {
+            case 25, 50, 75, 100 -> config.danmakuRollingRangePercent;
+            default -> 50;
+        };
+        config.danmakuSpeedPreset = Math.clamp(config.danmakuSpeedPreset, 0, 4);
+        config.danmakuDensityPreset = Math.clamp(config.danmakuDensityPreset, 0, 2);
+        config.danmakuOpacity = Math.clamp(config.danmakuOpacity, 20, 100);
+        config.danmakuScalePercent = Math.clamp(config.danmakuScalePercent, 50, 170);
+        int bilibiliQuality = BiliQuality.normalizeClient(config.bilibiliQuality);
+        if (config.bilibiliQuality != bilibiliQuality) {
+            config.bilibiliQuality = bilibiliQuality;
+            changed = true;
+        }
+        if (changed) saveConfig();
+    }
+
+    private static void registerStartupGuide() {
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (startupGuideOpened || config == null || Boolean.TRUE.equals(config.startupGuideShown)) return;
+            if (client.world != null || client.currentScreen == null || client.currentScreen instanceof StartupGuideScreen) return;
+            startupGuideOpened = true;
+            client.setScreen(new StartupGuideScreen(client.currentScreen));
+        });
+    }
+
+    private static void registerStartupGuideScreenOpener() {
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (!pendingStartupGuideScreen) return;
+            pendingStartupGuideScreen = false;
+            if (client.currentScreen instanceof StartupGuideScreen) return;
+            client.setScreen(new StartupGuideScreen(client.currentScreen));
+        });
+    }
+
+    private static void registerBiliLoginScreenOpener() {
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (!pendingBiliLoginScreen) return;
+            pendingBiliLoginScreen = false;
+            if (client.currentScreen instanceof BiliLoginScreen) return;
+            client.setScreen(new BiliLoginScreen(client.currentScreen));
+        });
+    }
+
+    private static void registerMpvFilterGraphScreenOpener() {
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (!pendingMpvFilterGraphScreen) return;
+            pendingMpvFilterGraphScreen = false;
+            if (client.currentScreen instanceof MpvFilterGraphScreen) return;
+            client.setScreen(new MpvFilterGraphScreen(client.currentScreen));
+        });
     }
 }
