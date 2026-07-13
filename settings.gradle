@@ -12,6 +12,4 @@ pluginManagement {
 rootProject.name = "VideoPlayer"
 include "paper-plugin"
 include "mcng-core"
-project(":mcng-core").projectDir = file("../mcng/mcng-core")
 include "mcng-fabric-client"
-project(":mcng-fabric-client").projectDir = file("../mcng/mcng-fabric-client")

@@ -111,12 +111,21 @@ jar {
 	from("LICENSE") {
 		rename { "${it}_${inputs.properties.archivesName}"}
 	}
+	from("MCNG_LICENSE") {
+		rename { "${it}_${inputs.properties.archivesName}"}
+	}
 }
 
 shadowJar {
 	archiveClassifier = "dev-shadow"
 	configurations = [project.configurations.shadowBundle]
 	from sourceSets.client.output
+	from("LICENSE") {
+		rename { "${it}_${project.base.archivesName.get()}"}
+	}
+	from("MCNG_LICENSE") {
+		rename { "${it}_${project.base.archivesName.get()}"}
+	}
 	relocate "com.github.squi2rel.mcng", "com.github.squi2rel.vp.shadow.mcng"
 }
 
