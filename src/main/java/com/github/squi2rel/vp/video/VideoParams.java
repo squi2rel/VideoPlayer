@@ -75,8 +75,8 @@ public final class VideoParams {
         if (rtspTcp && optionKeys.add("rtsp-transport")) {
             options.add("rtsp-transport=" + mpvSubValue("tcp"));
         }
-        String proxy = youtube ? normalizeHttpProxy(configuredProxy) : "";
-        String ytdlProxy = proxyWithoutCredentials(proxy);
+        String proxy = normalizeHttpProxy(configuredProxy);
+        String ytdlProxy = youtube ? proxyWithoutCredentials(proxy) : "";
         if (!proxy.isBlank()) {
             if (!optionKeys.contains("http-proxy")) {
                 options.add("http-proxy=" + mpvSubValue(proxy));
@@ -270,7 +270,7 @@ public final class VideoParams {
             }
         }
         if (isRtspTcp(rawPath) && !hasRtspTcp) options.add(":rtsp-tcp");
-        String proxy = youtube ? normalizeHttpProxy(configuredProxy) : "";
+        String proxy = isHttpPath(rawPath) ? normalizeHttpProxy(configuredProxy) : "";
         if (!proxy.isBlank()) options.add(":http-proxy=" + proxy);
         return options.toArray(String[]::new);
     }
@@ -285,6 +285,12 @@ public final class VideoParams {
         String trimmed = rawPath == null ? "" : rawPath.trim();
         if (!trimmed.regionMatches(true, 0, "rtspt://", 0, "rtspt://".length())) return trimmed;
         return "rtsp://" + trimmed.substring("rtspt://".length());
+    }
+
+    private static boolean isHttpPath(String rawPath) {
+        String value = rawPath == null ? "" : rawPath.trim();
+        return value.regionMatches(true, 0, "http://", 0, "http://".length())
+                || value.regionMatches(true, 0, "https://", 0, "https://".length());
     }
 
     private static String mpvKey(String key) {

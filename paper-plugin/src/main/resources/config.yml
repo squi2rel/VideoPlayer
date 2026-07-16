@@ -34,8 +34,7 @@ native:
   #   android: arm64-v8a with the vlc backend only
   arch: ""
 
-  # HTTP(S) proxy used for native runtime downloads and YouTube yt-dlp/mpv playback.
-  # YouTube playback uses this proxy only after the source is recognized as a YouTube link.
+  # HTTP(S) proxy used for native runtime downloads and stream playback.
   # Examples: http://127.0.0.1:7890, http://user:pass@127.0.0.1:7890
   download-proxy: ""
 

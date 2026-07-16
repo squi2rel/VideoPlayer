@@ -46,7 +46,7 @@ class VideoParamsRtspTest {
     }
 
     @Test
-    void appliesConfiguredProxyOnlyToYouTubeVlcMedia() {
+    void appliesConfiguredProxyToHttpMedia() {
         String proxy = "http://user:pass@127.0.0.1:7897";
 
         assertEquals(
@@ -54,9 +54,19 @@ class VideoParamsRtspTest {
                 List.of(VideoParams.vlcOptions("https://googlevideo.example/video", VideoParams.youtubeParams(), proxy))
         );
         assertEquals(
-                List.of(),
+                List.of(":http-proxy=" + proxy),
                 List.of(VideoParams.vlcOptions("https://example.com/video", new String[0], proxy))
         );
+    }
+
+    @Test
+    void appliesConfiguredProxyToMpvMedia() {
+        String proxy = "http://user:pass@127.0.0.1:7897";
+        String options = VideoParams.mpvLoadOptions(new String[0], proxy);
+
+        assertTrue(options.contains("http-proxy="));
+        assertTrue(options.contains(proxy));
+        assertFalse(options.contains("ytdl-raw-options="));
     }
 
     @Test

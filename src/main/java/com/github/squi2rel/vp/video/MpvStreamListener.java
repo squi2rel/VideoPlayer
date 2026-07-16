@@ -15,7 +15,7 @@ import java.util.function.Consumer;
 import static com.github.squi2rel.vp.video.MpvLibrary.*;
 
 final class MpvStreamListener implements IVideoListener {
-    private static final long TIMEOUT_MS = 10_000;
+    private static final long TIMEOUT_MS = 30_000;
     private static final long PROPERTY_POLL_INTERVAL_MS = 100;
 
     private final LibMpv lib;
@@ -150,6 +150,7 @@ final class MpvStreamListener implements IVideoListener {
             setOptionString(ctx, "vid", "no");
             setOptionString(ctx, "ao", "null");
             setOptionString(ctx, "mute", "yes");
+            setOptionString(ctx, "network-timeout", "30");
             check(ctx, lib.mpv_initialize(ctx), "mpv_initialize");
             loadFile(ctx, VideoParams.normalizeStreamPath(info.path()),
                     VideoParams.mpvLoadOptionsForPath(info.path(), info.params(), StreamListener.configuredProxy(),

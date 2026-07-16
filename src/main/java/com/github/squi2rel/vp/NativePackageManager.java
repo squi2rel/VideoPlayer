@@ -67,7 +67,7 @@ public final class NativePackageManager {
     private static final Gson GSON = new Gson();
     private static final int PACKAGE_MANIFEST_VERSION = 1;
     private static final String PACKAGE_MANIFEST_FILE = ".videoplayer-package.json";
-    private static final String PREPARED_DIRECTORY = "videoplayer-native";
+    private static final String PREPARED_DIRECTORY = "vp";
     private static final String PROCESS_DIRECTORY = processDirectory();
     private static final List<DownloadMirror> DOWNLOAD_MIRRORS = List.of(
             new DownloadMirror("ghfast.top", "https://ghfast.top/"),
@@ -485,12 +485,13 @@ public final class NativePackageManager {
         ReentrantLock prepareLock = INSTALL_LOCKS.computeIfAbsent(lockKey, ignored -> new ReentrantLock());
         prepareLock.lock();
         try (InstallFileLock ignored = acquireInstallFileLock(normalizedBackend, platform, ALWAYS_ACTIVE)) {
-            cleanupPreparedRoots(jnaTmpDir());
+            Path temporaryRoot = jnaTmpDir();
+            cleanupPreparedRoots(temporaryRoot);
             if (!isValidInstallation(installed, normalizedBackend, platform)) {
                 return Optional.empty();
             }
             String packageKey = sha256(installed.resolve(PACKAGE_MANIFEST_FILE));
-            Path prepared = preparedRoot(jnaTmpDir(), normalizedBackend, platform, installedPackageVersion(installed),
+            Path prepared = preparedRoot(temporaryRoot, normalizedBackend, platform, installedPackageVersion(installed),
                     PROCESS_DIRECTORY, packageKey);
             if (!isValidInstallation(prepared, normalizedBackend, platform)) {
                 Path staging = prepared.resolveSibling(prepared.getFileName() + ".preparing-" + UUID.randomUUID());
@@ -523,13 +524,16 @@ public final class NativePackageManager {
 
     static Path preparedRoot(Path temporaryRoot, String backend, String platform, String version,
                              String processDirectory, String packageKey) {
+        String identity = sha256Text(
+                NativeDownloadConfig.normalizeBackend(backend) + "\n"
+                        + NativeDownloadConfig.normalizeKnownPlatform(platform) + "\n"
+                        + (version == null ? "" : version) + "\n"
+                        + (packageKey == null ? "" : packageKey)
+        );
         return temporaryRoot
                 .resolve(PREPARED_DIRECTORY)
                 .resolve(safeName(processDirectory))
-                .resolve(safeName(version))
-                .resolve(NativeDownloadConfig.normalizeBackend(backend))
-                .resolve(safeName(platform))
-                .resolve(safeName(packageKey));
+                .resolve(identity.length() > 32 ? identity.substring(0, 32) : identity);
     }
 
     private static void cleanupPreparedRoots(Path temporaryRoot) {
@@ -666,15 +670,32 @@ public final class NativePackageManager {
     }
 
     private static Path jnaTmpDir() {
-        String configured = System.getProperty("jna.tmpdir", "").trim();
-        if (!configured.isBlank()) {
-            return Path.of(configured);
-        }
+        ArrayList<String> candidates = new ArrayList<>();
         String javaTmp = System.getProperty("java.io.tmpdir", "").trim();
-        if (!javaTmp.isBlank()) {
-            return Path.of(javaTmp);
+        String configured = System.getProperty("jna.tmpdir", "").trim();
+        String temp = System.getenv("TEMP");
+        String tmp = System.getenv("TMP");
+        if (!javaTmp.isBlank()) candidates.add(javaTmp);
+        if (!configured.isBlank()) candidates.add(configured);
+        if (temp != null && !temp.isBlank()) candidates.add(temp.trim());
+        if (tmp != null && !tmp.isBlank()) candidates.add(tmp.trim());
+
+        Path fallback = null;
+        Path selected = null;
+        for (String candidateValue : candidates) {
+            try {
+                Path candidate = Path.of(candidateValue).toAbsolutePath().normalize();
+                if (fallback == null) fallback = candidate;
+                Files.createDirectories(candidate);
+                if (!Files.isDirectory(candidate) || !Files.isWritable(candidate)) continue;
+                if (selected == null || candidate.toString().length() < selected.toString().length()) {
+                    selected = candidate;
+                }
+            } catch (IOException | RuntimeException ignored) {
+            }
         }
-        return Path.of(".");
+        if (selected != null) return selected;
+        return fallback == null ? Path.of(".") : fallback;
     }
 
     public static Optional<Path> findNativeLibrary(String backend, Path root) {

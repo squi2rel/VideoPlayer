@@ -178,7 +178,23 @@ class NativePackageManagerInstallTest {
         assertNotEquals(first, otherBackend);
         assertNotEquals(first, otherPlatform);
         assertNotEquals(first, otherPackage);
-        assertTrue(first.endsWith(Path.of("process-10", "2.0.1", "vlc", "windows_x64", "package-a")));
+        assertEquals("process-10", first.getParent().getFileName().toString());
+        assertEquals(first.getParent().getParent(), otherProcess.getParent().getParent());
+    }
+
+    @Test
+    void preparedLibraryPathStaysShortForLongMinecraftNativesPath() {
+        Path temporaryRoot = Path.of("C:/Users/test/Desktop/minecraft/long-folder-name/another-long-folder-name/.minecraft/versions/1.21.11-Fabric 0.19.3/1.21.11-Fabric 0.19.3-natives");
+        Path prepared = NativePackageManager.preparedRoot(
+                temporaryRoot,
+                "vlc",
+                "windows_x64",
+                "2.0.1",
+                "process-31376-1784216685666",
+                "39f665cfd765e8638a500478976b14e31ad17855ef0523f357dbc0d6401e8485"
+        );
+
+        assertTrue(prepared.resolve("libvlc.dll").toString().length() < 240);
     }
 
     @Test

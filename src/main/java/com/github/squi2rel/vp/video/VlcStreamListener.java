@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 final class VlcStreamListener implements IVideoListener {
-    private static final long TIMEOUT_MS = 10_000;
+    private static final long TIMEOUT_MS = 30_000;
     private static final long LOOP_SLEEP_MS = 50;
     private static final int[] MEDIA_PLAYER_EVENTS = {
             VlcLibrary.LIBVLC_MEDIA_PLAYER_PLAYING,
