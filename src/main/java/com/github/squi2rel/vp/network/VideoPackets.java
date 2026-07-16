@@ -20,6 +20,8 @@ import java.util.Map;
 import static com.github.squi2rel.vp.network.ByteBufUtils.writeString;
 
 public final class VideoPackets {
+    public static final int MAX_PAYLOAD_BYTES = 30_000;
+
     private VideoPackets() {
     }
 
@@ -28,7 +30,7 @@ public final class VideoPackets {
     }
 
     public static String readName(ByteBuf buf) {
-        return ByteBufUtils.readString(buf, VideoScreen.MAX_NAME_LENGTH);
+        return ByteBufUtils.readString(buf, VideoScreen.MAX_NAME_BYTES);
     }
 
     public static ByteBuf create(VideoPacketType type) {
@@ -38,6 +40,11 @@ public final class VideoPackets {
     }
 
     public static byte[] toByteArray(ByteBuf buf) {
+        if (buf.readableBytes() > MAX_PAYLOAD_BYTES) {
+            int size = buf.readableBytes();
+            buf.release();
+            throw new IllegalStateException("VideoPlayer payload exceeds " + MAX_PAYLOAD_BYTES + " bytes: " + size);
+        }
         byte[] bytes = new byte[buf.readableBytes()];
         buf.readBytes(bytes);
         buf.release();
@@ -73,21 +80,52 @@ public final class VideoPackets {
     public static void readIdlePlayConfig(ByteBuf buf, VideoScreen screen) {
         boolean random = buf.readBoolean();
         int count = buf.readUnsignedByte();
+        if (count > VideoScreen.MAX_IDLE_PLAY_ITEMS) {
+            throw new IllegalStateException("IdlePlay item count exceeds " + VideoScreen.MAX_IDLE_PLAY_ITEMS);
+        }
         ArrayList<String> urls = new ArrayList<>(Math.min(count, VideoScreen.MAX_IDLE_PLAY_ITEMS));
+        int totalBytes = 0;
         for (int i = 0; i < count; i++) {
             String url = ByteBufUtils.readString(buf, VideoScreen.MAX_IDLE_PLAY_URL_LENGTH);
+            totalBytes += ByteBufUtils.utf8Length(url);
+            if (totalBytes > VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES) {
+                throw new IllegalStateException("IdlePlay URL payload exceeds " + VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES + " bytes");
+            }
             if (urls.size() < VideoScreen.MAX_IDLE_PLAY_ITEMS) urls.add(url);
         }
         screen.setIdlePlayConfig(urls, random);
     }
 
     public static void writeIdlePlayConfig(ByteBuf buf, VideoScreen screen) {
-        screen.ensureValidState();
-        buf.writeBoolean(screen.idlePlayRandom);
-        int count = Math.min(screen.idlePlayUrls.size(), VideoScreen.MAX_IDLE_PLAY_ITEMS);
+        writeIdlePlayConfig(buf, screen.idlePlayUrls, screen.idlePlayRandom);
+    }
+
+    public static void writeIdlePlayConfig(ByteBuf buf, List<String> requestedUrls, boolean random) {
+        List<String> urls;
+        try {
+            urls = VideoScreen.validatedIdlePlayConfig(requestedUrls);
+        } catch (IllegalArgumentException error) {
+            throw new IllegalStateException(error.getMessage(), error);
+        }
+        int count = urls.size();
+        int totalBytes = 0;
+        for (int i = 0; i < count; i++) {
+            String url = urls.get(i);
+            if (url == null || url.isBlank()) throw new IllegalStateException("IdlePlay URL must not be empty");
+            int bytes = ByteBufUtils.utf8Length(url);
+            if (bytes > VideoScreen.MAX_IDLE_PLAY_URL_BYTES) {
+                throw new IllegalStateException("IdlePlay URL exceeds " + VideoScreen.MAX_IDLE_PLAY_URL_BYTES + " bytes");
+            }
+            totalBytes += bytes;
+            if (totalBytes > VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES) {
+                throw new IllegalStateException("IdlePlay URL payload exceeds " + VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES + " bytes");
+            }
+        }
+        buf.writeBoolean(random);
         buf.writeByte(count);
         for (int i = 0; i < count; i++) {
-            ByteBufUtils.writeString(buf, screen.idlePlayUrls.get(i));
+            String url = urls.get(i);
+            ByteBufUtils.writeString(buf, url);
         }
     }
 
@@ -197,7 +235,38 @@ public final class VideoPackets {
     }
 
     public static byte[] config(String version, ServerConfig config) {
-        ByteBuf buf = create(VideoPacketType.CONFIG);
+        return config(VideoPacketType.CONFIG, version, config);
+    }
+
+    public static byte[] resetClient(String version, ServerConfig config, long nonce) {
+        ByteBuf buf = create(VideoPacketType.RESET_CLIENT);
+        writeString(buf, version);
+        writeString(buf, config.remoteControlName);
+        buf.writeFloat(config.remoteControlId);
+        buf.writeFloat(config.remoteControlRange);
+        buf.writeFloat(config.noControlRange);
+        buf.writeLong(nonce);
+        return toByteArray(buf);
+    }
+
+    public static byte[] resetClient(String version, ServerConfig config) {
+        return config(VideoPacketType.RESET_CLIENT, version, config);
+    }
+
+    public static byte[] handshakeAck(long nonce) {
+        ByteBuf buf = create(VideoPacketType.HANDSHAKE_ACK);
+        buf.writeLong(nonce);
+        return toByteArray(buf);
+    }
+
+    public static byte[] protocolReject(String version) {
+        ByteBuf buf = create(VideoPacketType.PROTOCOL_REJECT);
+        writeString(buf, VideoProtocol.token(version));
+        return toByteArray(buf);
+    }
+
+    private static byte[] config(VideoPacketType type, String version, ServerConfig config) {
+        ByteBuf buf = create(type);
         writeString(buf, version);
         writeString(buf, config.remoteControlName);
         buf.writeFloat(config.remoteControlId);
@@ -248,19 +317,27 @@ public final class VideoPackets {
         return request(screen, info, false);
     }
 
-    public static byte[] request(VideoScreen screen, VideoInfo info, boolean idle) {
+    public static byte[] request(VideoScreen screen, VideoInfo info, boolean idle, long generation, long progress) {
         ByteBuf buf = create(VideoPacketType.REQUEST);
         writeString(buf, screen.area.name);
         writeString(buf, screen.name);
+        buf.writeLong(generation);
+        buf.writeLong(progress);
+        buf.writeLong(System.currentTimeMillis());
         VideoInfo.write(buf, info);
         buf.writeBoolean(idle);
         return toByteArray(buf);
+    }
+
+    public static byte[] request(VideoScreen screen, VideoInfo info, boolean idle) {
+        return request(screen, info, idle, screen.currentPlaybackGeneration(), screen.getProgress());
     }
 
     public static byte[] sync(VideoScreen screen, long time) {
         ByteBuf buf = create(VideoPacketType.SYNC);
         writeString(buf, screen.area.name);
         writeString(buf, screen.name);
+        buf.writeLong(screen.currentPlaybackGeneration());
         buf.writeLong(time);
         return toByteArray(buf);
     }
@@ -269,6 +346,7 @@ public final class VideoPackets {
         ByteBuf buf = create(VideoPacketType.SEEK);
         writeString(buf, screen.area.name);
         writeString(buf, screen.name);
+        buf.writeLong(screen.currentPlaybackGeneration());
         buf.writeLong(progress);
         return toByteArray(buf);
     }
@@ -287,6 +365,9 @@ public final class VideoPackets {
     }
 
     public static byte[] createScreen(List<VideoScreen> screens) {
+        if (screens == null || screens.isEmpty() || screens.size() > VideoArea.MAX_SCREENS) {
+            throw new IllegalArgumentException("Invalid video screen snapshot size");
+        }
         ByteBuf buf = create(VideoPacketType.CREATE_SCREEN);
         writeString(buf, screens.getFirst().area.name);
         buf.writeByte(screens.size());
@@ -294,7 +375,6 @@ public final class VideoPackets {
             VideoScreen.write(buf, screen);
             writeUv(buf, screen);
             writeScale(buf, screen);
-            writeMeta(buf, screen);
         }
         return toByteArray(buf);
     }
@@ -313,9 +393,26 @@ public final class VideoPackets {
             VideoInfo info = screen.currentPlayback();
             if (info == null) continue;
             writeString(buf, screen.name);
+            buf.writeLong(screen.currentPlaybackGeneration());
             VideoInfo.write(buf, info);
             buf.writeLong(screen.getProgress());
             buf.writeBoolean(screen.currentPlaybackIdle());
+        }
+        return toByteArray(buf);
+    }
+
+    public static byte[] loadArea(VideoArea area, VideoScreen only) {
+        ByteBuf buf = create(VideoPacketType.LOAD_AREA);
+        writeString(buf, area.name);
+        if (only != null) {
+            VideoInfo info = only.currentPlayback();
+            if (info != null) {
+                writeString(buf, only.name);
+                buf.writeLong(only.currentPlaybackGeneration());
+                VideoInfo.write(buf, info);
+                buf.writeLong(only.getProgress());
+                buf.writeBoolean(only.currentPlaybackIdle());
+            }
         }
         return toByteArray(buf);
     }
@@ -327,11 +424,17 @@ public final class VideoPackets {
     }
 
     public static byte[] updatePlaylist(List<VideoScreen> screens) {
+        if (screens == null || screens.isEmpty() || screens.size() > VideoArea.MAX_SCREENS) {
+            throw new IllegalArgumentException("Invalid playlist snapshot size");
+        }
         ByteBuf buf = create(VideoPacketType.UPDATE_PLAYLIST);
         writeString(buf, screens.getFirst().area.name);
         buf.writeByte(screens.size());
         for (VideoScreen screen : screens) {
             writeString(buf, screen.name);
+            if (screen.infos.size() > com.github.squi2rel.vp.video.PlaybackQueue.MAX_ITEMS) {
+                throw new IllegalStateException("Video queue exceeds " + com.github.squi2rel.vp.video.PlaybackQueue.MAX_ITEMS + " items");
+            }
             buf.writeByte(screen.infos.size());
             for (VideoInfo info : screen.infos) {
                 writeString(buf, info.playerName());
@@ -346,6 +449,7 @@ public final class VideoPackets {
         ByteBuf buf = create(VideoPacketType.SKIP);
         writeString(buf, screen.area.name);
         writeString(buf, screen.name);
+        buf.writeLong(screen.currentPlaybackGeneration());
         return toByteArray(buf);
     }
 
@@ -407,6 +511,7 @@ public final class VideoPackets {
         ByteBuf buf = create(VideoPacketType.AUTO_SYNC);
         writeString(buf, screen.area.name);
         writeString(buf, screen.name);
+        buf.writeLong(screen.currentPlaybackGeneration());
         buf.writeLong(clientTime);
         buf.writeLong(progress);
         buf.writeLong(Math.max(0L, serverDelay));

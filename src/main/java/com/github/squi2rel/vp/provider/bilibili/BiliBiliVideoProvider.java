@@ -2,6 +2,7 @@ package com.github.squi2rel.vp.provider.bilibili;
 
 import com.github.squi2rel.vp.provider.IProviderSource;
 import com.github.squi2rel.vp.provider.VideoInfo;
+import com.github.squi2rel.vp.provider.VideoProviders;
 import com.github.squi2rel.vp.video.VideoParams;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -13,6 +14,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
+import java.io.InputStream;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -50,9 +53,9 @@ public class BiliBiliVideoProvider extends BiliBiliProvider {
         return CompletableFuture.supplyAsync(() -> {
             String title = rawPath;
             long durationMs = 0L;
-            try (HttpClient client = HttpClient.newHttpClient()) {
-                HttpResponse<String> response = client.send(makeRequest(String.format(FETCH_URL, bvid)), HttpResponse.BodyHandlers.ofString());
-                JsonObject data = requireData(response.body(), "view");
+            try (HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build()) {
+                HttpResponse<InputStream> response = client.send(makeRequest(String.format(FETCH_URL, bvid)), HttpResponse.BodyHandlers.ofInputStream());
+                JsonObject data = requireData(responseBody(response), "view");
                 String cid;
                 if (page <= 1) {
                     cid = data.get("cid").getAsString();
@@ -71,7 +74,7 @@ public class BiliBiliVideoProvider extends BiliBiliProvider {
                 CACHE.put(cacheKey, new VideoCache(meta.title(), resolved.url, expire, resolved.params, durationMs));
                 return new VideoInfo(source.name(), meta.title(), resolved.url, rawPath, expire, true, resolved.params, durationMs);
             } catch (Exception e) {
-                LOGGER.warn("Failed to resolve Bilibili source {}; falling back to client-side resolution", rawPath, e);
+                LOGGER.warn("Failed to resolve Bilibili source {}; falling back to client-side resolution", VideoProviders.redactedSource(rawPath), e);
                 return clientResolvableFallback(source, title, rawPath, durationMs);
             }
         });
@@ -173,8 +176,8 @@ public class BiliBiliVideoProvider extends BiliBiliProvider {
     }
 
     private static JsonObject playData(HttpClient client, String url) throws Exception {
-        HttpResponse<String> response = client.send(makeRequest(url), HttpResponse.BodyHandlers.ofString());
-        return requireData(response.body(), "playurl");
+        HttpResponse<InputStream> response = client.send(makeRequest(url), HttpResponse.BodyHandlers.ofInputStream());
+        return requireData(responseBody(response), "playurl");
     }
 
     private static JsonObject requireData(String body, String apiName) {

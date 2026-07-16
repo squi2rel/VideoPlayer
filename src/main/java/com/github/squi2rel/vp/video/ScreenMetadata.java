@@ -14,6 +14,9 @@ public class ScreenMetadata {
     public static final String KEY_DEFAULT_VOLUME = "defaultVolume";
     public static final String KEY_DANMAKU_ENABLED = "danmaku";
     public static final String KEY_BILIBILI_QUALITY = "bilibiliQuality";
+    public static final String KEY_YOUTUBE_QUALITY = "youtubeQuality";
+    public static final String KEY_CAMERA_ASPECT = "aspect";
+    public static final String KEY_CAMERA_FOV = "fov";
 
     private static final Pattern VALID_KEY = Pattern.compile("[A-Za-z0-9_.:-]{1,64}");
     public Map<String, MetaValue> values = new HashMap<>();

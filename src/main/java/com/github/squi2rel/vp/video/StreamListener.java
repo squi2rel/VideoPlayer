@@ -28,6 +28,11 @@ public class StreamListener implements IVideoListener {
 
     public static synchronized boolean load() {
         if (mpvAvailable || vlcAvailable) return true;
+        if (VideoPlayerMain.android) {
+            if (loadBackend(NativePackageManager.BACKEND_VLC, false)) return true;
+            VideoPlayerMain.LOGGER.warn("Android VLC stream listener backend is not available", vlcError);
+            return false;
+        }
         String first = NativeDownloadConfig.normalizeBackend(preferredBackend);
         String second = NativePackageManager.BACKEND_MPV.equals(first)
                 ? NativePackageManager.BACKEND_VLC
@@ -46,11 +51,24 @@ public class StreamListener implements IVideoListener {
         return false;
     }
 
+    public static boolean isLoaded() {
+        return mpvAvailable || vlcAvailable;
+    }
+
+    public static Throwable loadError() {
+        IllegalStateException error = new IllegalStateException("Stream listener backend is not loaded");
+        if (mpvError != null) error.addSuppressed(mpvError);
+        if (vlcError != null) error.addSuppressed(vlcError);
+        return error;
+    }
+
     public static synchronized void configurePreferredBackend(String backend) {
-        String normalized = NativeDownloadConfig.normalizeBackend(backend);
+        String normalized = VideoPlayerMain.android
+                ? NativePackageManager.BACKEND_VLC
+                : NativeDownloadConfig.normalizeBackend(backend);
         if (!normalized.equals(preferredBackend)) {
             preferredBackend = normalized;
-            resetLoadState();
+            if (!isLoaded()) resetLoadState();
         }
     }
 
@@ -71,12 +89,22 @@ public class StreamListener implements IVideoListener {
     }
 
     public static synchronized void resetLoadState() {
+        if (isLoaded()) return;
         mpvAvailable = false;
         vlcAvailable = false;
         mpvError = null;
         vlcError = null;
         MpvLibrary.resetLoadState();
         VlcStreamListener.resetLoadState();
+    }
+
+    public static synchronized void shutdown() {
+        VlcStreamListener.shutdown();
+        mpvAvailable = false;
+        vlcAvailable = false;
+        mpvError = null;
+        vlcError = null;
+        MpvLibrary.resetLoadState();
     }
 
     private static boolean loadBackend(String backend, boolean fallback) {
@@ -109,7 +137,9 @@ public class StreamListener implements IVideoListener {
 
     private static IVideoListener create(VideoInfo info) {
         load();
-        String first = NativeDownloadConfig.normalizeBackend(preferredBackend);
+        String first = VideoPlayerMain.android
+                ? NativePackageManager.BACKEND_VLC
+                : NativeDownloadConfig.normalizeBackend(preferredBackend);
         if (NativePackageManager.BACKEND_MPV.equals(first)) {
             if (mpvAvailable) return new MpvStreamListener(info);
             if (vlcAvailable) return new VlcStreamListener(info);

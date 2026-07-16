@@ -3,6 +3,7 @@ package com.github.squi2rel.vp.creation;
 import com.github.squi2rel.vp.ClientPacketHandler;
 import com.github.squi2rel.vp.ClientPermissionCache;
 import com.github.squi2rel.vp.ScreenRenderer;
+import com.github.squi2rel.vp.VideoPlayerClient;
 import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.permission.VideoPermissionAction;
 import com.github.squi2rel.vp.video.ClientVideoScreen;
@@ -21,7 +22,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.function.Consumer;
 
-public class VideoMappingScreen extends Screen {
+public class VideoMappingScreen extends Screen implements ServerStateScreen {
     private static final int HANDLE_SIZE = 3;
     private static final int HANDLE_HIT_SIZE = 9;
     private static final int EDGE_HIT_SIZE = 6;
@@ -67,6 +68,10 @@ public class VideoMappingScreen extends Screen {
     private float edgeStartBY;
     private boolean dirty;
     private boolean keepAspect;
+    private boolean savePending;
+    private long editRevision;
+    private VpButtonWidget saveButton;
+    private VpButtonWidget resetButton;
 
     public VideoMappingScreen(Screen parent, ClientVideoScreen screen) {
         super(VpTexts.tr("screen.videoplayer.mapping_editor", "Custom Mapping Editor"));
@@ -79,13 +84,12 @@ public class VideoMappingScreen extends Screen {
     protected void init() {
         int bottom = height - 30;
         int startX = width / 2 - 166;
-        VpButtonWidget save = button(VpTexts.tr("button.videoplayer.save", "Save"), startX, bottom, 72, button -> save(button));
-        save.active = canEditMapping();
-        VpButtonWidget reset = button(VpTexts.tr("button.videoplayer.reset", "Reset"), startX + 78, bottom, 72, button -> {
+        saveButton = button(VpTexts.tr("button.videoplayer.save", "Save"), startX, bottom, 72, button -> save(button));
+        resetButton = button(VpTexts.tr("button.videoplayer.reset", "Reset"), startX + 78, bottom, 72, button -> {
             resetUvs();
             save(button);
         });
-        reset.active = canEditMapping();
+        refreshSaveControls();
         VpButtonWidget keepAspectButton = new VpButtonWidget(startX + 156, bottom, 98, CONTROL_HEIGHT, keepAspectText(), button -> {
             this.keepAspect = !this.keepAspect;
             button.setMessage(keepAspectText());
@@ -336,19 +340,27 @@ public class VideoMappingScreen extends Screen {
     }
 
     private void loadUvs() {
+        uvs.clear();
         int vertexCount = screen.vertices.size();
         float[] stored = screen.metadata.getFloatArray(ScreenMetadata.KEY_MAPPING_UVS);
         if (stored != null && stored.length == vertexCount * 2) {
             for (int i = 0; i < vertexCount; i++) {
                 uvs.add(new Vector2f(stored[i * 2], stored[i * 2 + 1]));
             }
+            dirty = false;
             return;
         }
-        resetUvs();
+        resetUvValues();
         dirty = false;
     }
 
     private void resetUvs() {
+        resetUvValues();
+        dirty = true;
+        editRevision++;
+    }
+
+    private void resetUvValues() {
         uvs.clear();
         if (!resetFromGeometry()) {
             int count = Math.max(1, screen.vertices.size());
@@ -360,8 +372,6 @@ public class VideoMappingScreen extends Screen {
                 ));
             }
         }
-        applyLocal();
-        dirty = true;
     }
 
     private void computeLayout() {
@@ -736,13 +746,9 @@ public class VideoMappingScreen extends Screen {
         return ox * ox + oy * oy;
     }
 
-    private void applyLocal() {
-        screen.metadata.set(ScreenMetadata.KEY_MAPPING_UVS, MetaValue.ofFloatArray(toFloatArray()));
-    }
-
     private void markDirty() {
-        applyLocal();
         dirty = true;
+        editRevision++;
     }
 
     private void saveIfDirty() {
@@ -754,12 +760,39 @@ public class VideoMappingScreen extends Screen {
     }
 
     private void save(VpButtonWidget button) {
-        if (!canEditMapping()) return;
-        applyLocal();
-        ClientPacketHandler.setMetadata(screen, ScreenMetadata.KEY_MAPPING_UVS, MetaValue.ofFloatArray(toFloatArray()), result -> {
-            if (ClientPacketHandler.denied(result) && button != null) button.showPermissionDenied();
-        });
+        if (!canEditMapping() || savePending) return;
+        float[] submitted = toFloatArray();
+        long submittedRevision = editRevision;
+        savePending = true;
         dirty = false;
+        refreshSaveControls();
+        ClientPacketHandler.setMetadata(screen, ScreenMetadata.KEY_MAPPING_UVS, MetaValue.ofFloatArray(submitted), result -> {
+            savePending = false;
+            if (ClientPacketHandler.denied(result) && button != null) button.showPermissionDenied();
+            boolean success = result != null && result.status() == com.github.squi2rel.vp.network.RequestResultStatus.OK;
+            boolean newerEdit = editRevision != submittedRevision;
+            if (newerEdit) {
+                dirty = true;
+                if (success && currentScreen() && canEditMapping()) {
+                    save();
+                }
+            } else {
+                dirty = !success;
+            }
+            refreshSaveControls();
+        });
+    }
+
+    private void refreshSaveControls() {
+        boolean active = currentScreen() && canEditMapping() && !savePending;
+        if (saveButton != null) saveButton.active = active;
+        if (resetButton != null) resetButton.active = active;
+    }
+
+    private boolean currentScreen() {
+        return screen.area != null
+                && VideoPlayerClient.screens.contains(screen)
+                && screen.area.getScreen(screen.name) == screen;
     }
 
     private boolean canEditMapping() {

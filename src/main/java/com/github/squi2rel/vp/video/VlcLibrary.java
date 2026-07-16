@@ -1,5 +1,6 @@
 package com.github.squi2rel.vp.video;
 
+import com.github.squi2rel.vp.Android;
 import com.github.squi2rel.vp.NativeDownloadConfig;
 import com.github.squi2rel.vp.NativePackageManager;
 import com.github.squi2rel.vp.VideoPlayerMain;
@@ -24,6 +25,7 @@ final class VlcLibrary {
     static final int LIBVLC_MEDIA_PLAYER_ENCOUNTERED_ERROR = 0x10A;
     static final int LIBVLC_MEDIA_PLAYER_TIME_CHANGED = 0x10B;
     static final int LIBVLC_MEDIA_PLAYER_LENGTH_CHANGED = 0x111;
+    static final int LIBVLC_ENDED = 6;
 
     private static volatile LibVlc lib;
     private static volatile Throwable loadError;
@@ -41,6 +43,10 @@ final class VlcLibrary {
             if (lib != null) return lib;
             if (loadError != null) throw unavailable(loadError);
             Throwable last = null;
+            if (VideoPlayerMain.android && !NativePackageManager.ensureBundledAndroidVlc()) {
+                loadError = new IllegalStateException("Bundled Android ARM64 VLC runtime is unavailable for " + NativeDownloadConfig.platformKey());
+                throw unavailable(loadError);
+            }
             Optional<NativePackageManager.PreparedNativePackage> prepared = NativePackageManager.prepareForLoad(NativePackageManager.BACKEND_VLC);
             if (prepared.isPresent()) {
                 NativePackageManager.PreparedNativePackage nativePackage = prepared.get();
@@ -52,8 +58,15 @@ final class VlcLibrary {
                         return lib;
                     } catch (Throwable t) {
                         last = t;
+                    } finally {
+                        NativeLibraryLoader.clearWindowsDllDirectory();
                     }
                 }
+            }
+            NativeLibraryLoader.clearWindowsDllDirectory();
+            if (VideoPlayerMain.android) {
+                loadError = last == null ? new IllegalStateException("Bundled Android VLC runtime could not be prepared") : last;
+                throw unavailable(loadError);
             }
             for (String name : libraryCandidates()) {
                 try {
@@ -89,6 +102,7 @@ final class VlcLibrary {
 
     static void resetLoadState() {
         synchronized (VlcLibrary.class) {
+            if (lib != null) return;
             lib = null;
             loadError = null;
             pluginPath = null;
@@ -118,7 +132,7 @@ final class VlcLibrary {
     }
 
     static Pointer createMedia(Pointer instance, String rawPath, String[] options) {
-        String path = rawPath == null ? "" : rawPath.replace("rtspt://", "rtsp://");
+        String path = VideoParams.normalizeStreamPath(rawPath);
         LibVlc loaded = get();
         Pointer media;
         Memory pathMemory = utf8(path);
@@ -178,6 +192,16 @@ final class VlcLibrary {
     private static LibVlc loadByPath(Path path) {
         String absolute = path.toAbsolutePath().toString();
         NativeLibraryLoader.prepareWindowsDllDirectoryForLibrary(path);
+        if (VideoPlayerMain.android) {
+            Path parent = path.toAbsolutePath().getParent();
+            Path sharedRuntime = parent.resolve("libc++_shared.so");
+            if (java.nio.file.Files.isRegularFile(sharedRuntime)) {
+                System.load(sharedRuntime.toString());
+            }
+            LibVlc loaded = Native.load(absolute, LibVlc.class);
+            Android.load(parent);
+            return loaded;
+        }
         System.load(absolute);
         return Native.load(absolute, LibVlc.class);
     }
@@ -255,6 +279,8 @@ final class VlcLibrary {
         int libvlc_media_player_can_pause(Pointer player);
 
         int libvlc_media_player_is_seekable(Pointer player);
+
+        int libvlc_media_player_get_state(Pointer player);
 
         long libvlc_media_player_get_time(Pointer player);
 

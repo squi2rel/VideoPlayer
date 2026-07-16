@@ -264,12 +264,13 @@ public final class ClientDanmakuController {
         String expectedInfoKey = currentInfoKey;
         loadingSegments.add(segment);
         BiliVodDanmakuFetcher.fetchSegment(sourceInfo, segment).thenAccept(entries -> MinecraftClient.getInstance().execute(() -> {
+            if (!Objects.equals(expectedInfoKey, currentInfoKey)) return;
             loadingSegments.remove(segment);
             loadedSegments.add(segment);
-            if (!Objects.equals(expectedInfoKey, currentInfoKey)) return;
             addVodEntries(entries);
         })).exceptionally(e -> {
             MinecraftClient.getInstance().execute(() -> {
+                if (!Objects.equals(expectedInfoKey, currentInfoKey)) return;
                 loadingSegments.remove(segment);
                 loadedSegments.add(segment);
             });

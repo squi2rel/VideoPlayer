@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.UUID;
 
 public class PlaybackQueue {
+    public static final int MAX_ITEMS = 32;
     private final VideoScreen screen;
     private final ArrayDeque<VideoInfo> infos = new ArrayDeque<>();
     private final HashSet<UUID> skipped = new HashSet<>();
@@ -15,8 +16,9 @@ public class PlaybackQueue {
         this.screen = screen;
     }
 
-    public void add(VideoInfo info) {
-        infos.offer(info);
+    public boolean add(VideoInfo info) {
+        if (info == null || infos.size() >= MAX_ITEMS) return false;
+        return infos.offer(info);
     }
 
     public VideoInfo peek() {

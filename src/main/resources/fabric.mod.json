@@ -5,7 +5,8 @@
 	"name": "VideoPlayer",
 	"description": "Player video in-game using MPV/VLC library",
 	"authors": [
-		"squi2rel"
+		"squi2rel",
+		"cloudfl4re"
 	],
 	"contact": {
 		"sources": "https://github.com/squi2rel/VideoPlayer"
@@ -32,7 +33,7 @@
 		}
 	],
 	"depends": {
-		"fabricloader": ">=0.19.3",
+		"fabricloader": ">=0.17.3",
 		"minecraft": "~1.21.11",
 		"java": ">=21",
 		"fabric-api": "*"

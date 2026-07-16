@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp.danmaku;
 
 import com.github.squi2rel.vp.provider.bilibili.BiliBiliProvider;
+import com.github.squi2rel.vp.provider.MediaAddressPolicy;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -35,6 +36,10 @@ final class BiliLiveDanmakuClient {
     private static final int VERSION_NORMAL = 0;
     private static final int VERSION_ZLIB = 2;
     private static final int VERSION_BROTLI = 3;
+    private static final int MAX_SOCKET_MESSAGE_BYTES = 2 * 1024 * 1024;
+    private static final int MAX_PACKET_BYTES = 512 * 1024;
+    private static final int MAX_DECOMPRESSED_BYTES = 2 * 1024 * 1024;
+    private static final int MAX_COMPRESSION_DEPTH = 4;
     private static final ScheduledExecutorService EXECUTOR = Executors.newScheduledThreadPool(2, runnable -> {
         Thread thread = new Thread(runnable, "VideoPlayer-bili-live-danmaku");
         thread.setDaemon(true);
@@ -88,6 +93,10 @@ final class BiliLiveDanmakuClient {
                     .header("Origin", "https://live.bilibili.com")
                     .buildAsync(info.uri(), listener)
                     .thenAccept(webSocket -> {
+                        if (stopped) {
+                            webSocket.abort();
+                            return;
+                        }
                         socket = webSocket;
                         reconnectAttempts = 0;
                     })
@@ -120,7 +129,16 @@ final class BiliLiveDanmakuClient {
         JsonObject host = hosts.get(0).getAsJsonObject();
         String hostName = host.get("host").getAsString();
         int port = host.has("wss_port") && !host.get("wss_port").isJsonNull() ? host.get("wss_port").getAsInt() : 443;
-        return new BiliLiveDanmuInfo(URI.create("wss://" + hostName + ":" + port + "/sub"), token);
+        URI socketUri = URI.create("wss://" + hostName + ":" + port + "/sub");
+        if (!"wss".equalsIgnoreCase(socketUri.getScheme())
+                || socketUri.getHost() == null
+                || socketUri.getHost().isBlank()
+                || socketUri.getUserInfo() != null
+                || port < 1 || port > 65535
+                || !MediaAddressPolicy.isAllowed("https://" + socketUri.getHost() + ":" + port + "/")) {
+            throw new IllegalStateException("Bilibili live danmaku host is not allowed");
+        }
+        return new BiliLiveDanmuInfo(socketUri, token);
     }
 
     private void scheduleReconnect() {
@@ -161,18 +179,29 @@ final class BiliLiveDanmakuClient {
         @Override
         public void onOpen(WebSocket webSocket) {
             WebSocket.Listener.super.onOpen(webSocket);
+            if (stopped) {
+                webSocket.abort();
+                return;
+            }
             webSocket.request(1);
             webSocket.sendBinary(packet(OP_AUTH, authPayload(token)), true);
-            heartbeatTask = EXECUTOR.scheduleAtFixedRate(() -> {
+            ScheduledFuture<?> scheduled = EXECUTOR.scheduleAtFixedRate(() -> {
                 WebSocket current = socket;
                 if (!stopped && current != null) current.sendBinary(packet(OP_HEARTBEAT, "{}".getBytes(StandardCharsets.UTF_8)), true);
             }, 30, 30, TimeUnit.SECONDS);
+            heartbeatTask = scheduled;
+            if (stopped) scheduled.cancel(false);
         }
 
         @Override
         public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
             byte[] chunk = new byte[data.remaining()];
             data.get(chunk);
+            if (partial.size() > MAX_SOCKET_MESSAGE_BYTES - chunk.length) {
+                partial.reset();
+                webSocket.abort();
+                return CompletableFuture.completedFuture(null);
+            }
             partial.writeBytes(chunk);
             if (last) {
                 parsePackets(partial.toByteArray());
@@ -227,28 +256,36 @@ final class BiliLiveDanmakuClient {
     }
 
     private void parsePackets(byte[] data) {
+        parsePackets(data, 0);
+    }
+
+    private void parsePackets(byte[] data, int depth) {
+        if (depth > MAX_COMPRESSION_DEPTH) return;
+        if (data == null || data.length > MAX_SOCKET_MESSAGE_BYTES) return;
         int offset = 0;
         while (offset + 16 <= data.length) {
             int packetLength = int32(data, offset);
             int headerLength = uint16(data, offset + 4);
             int version = uint16(data, offset + 6);
             int operation = int32(data, offset + 8);
-            if (packetLength <= 0 || offset + packetLength > data.length || headerLength < 16 || headerLength > packetLength) break;
+            long end = (long) offset + packetLength;
+            if (packetLength < 16 || packetLength > MAX_PACKET_BYTES || end > data.length
+                    || headerLength < 16 || headerLength > packetLength) break;
             byte[] body = new byte[packetLength - headerLength];
             System.arraycopy(data, offset + headerLength, body, 0, body.length);
-            handlePacket(version, operation, body);
-            offset += packetLength;
+            handlePacket(version, operation, body, depth);
+            offset = (int) end;
         }
     }
 
-    private void handlePacket(int version, int operation, byte[] body) {
+    private void handlePacket(int version, int operation, byte[] body, int depth) {
         try {
             if (version == VERSION_ZLIB) {
-                parsePackets(inflate(body));
+                parsePackets(inflate(body), depth + 1);
                 return;
             }
             if (version == VERSION_BROTLI) {
-                parsePackets(brotli(body));
+                parsePackets(brotli(body), depth + 1);
                 return;
             }
             if (operation != OP_MESSAGE || version != VERSION_NORMAL && version != 1) return;
@@ -282,14 +319,30 @@ final class BiliLiveDanmakuClient {
 
     private byte[] inflate(byte[] data) throws Exception {
         try (InflaterInputStream input = new InflaterInputStream(new ByteArrayInputStream(data))) {
-            return input.readAllBytes();
+            return readLimited(input);
         }
     }
 
     private byte[] brotli(byte[] data) throws Exception {
         try (BrotliInputStream input = new BrotliInputStream(new ByteArrayInputStream(data))) {
-            return input.readAllBytes();
+            return readLimited(input);
         }
+    }
+
+    private byte[] readLimited(java.io.InputStream input) throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int total = 0;
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+            if (read == 0) continue;
+            if (total > MAX_DECOMPRESSED_BYTES - read) {
+                throw new IllegalStateException("Bilibili danmaku packet is too large");
+            }
+            output.write(buffer, 0, read);
+            total += read;
+        }
+        return output.toByteArray();
     }
 
     private int int32(byte[] data, int offset) {

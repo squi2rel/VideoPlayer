@@ -490,8 +490,14 @@ public final class VideoCreationEditor {
             setStatus("error.videoplayer.name_empty", "Name must not be empty", true);
             return false;
         }
-        if (name.length() > VideoScreen.MAX_NAME_LENGTH) {
-            setStatus("error.videoplayer.name_too_long_plain", "Name must not exceed %s characters", true, VideoScreen.MAX_NAME_LENGTH);
+        if (!VideoScreen.validName(name)) {
+            setStatus(
+                    "error.videoplayer.name_invalid_length_plain",
+                    "Name must not exceed %s Unicode characters or %s UTF-8 bytes",
+                    true,
+                    VideoScreen.MAX_NAME_LENGTH,
+                    VideoScreen.MAX_NAME_BYTES
+            );
             return false;
         }
         if (draft.operation == Operation.CREATE_AREA) {

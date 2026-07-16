@@ -10,11 +10,11 @@ import com.github.squi2rel.vp.danmaku.ClientSubtitleController;
 import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.network.RequestResultStatus;
 import com.github.squi2rel.vp.permission.VideoPermissionAction;
-import com.github.squi2rel.vp.provider.NamedProviderSource;
 import com.github.squi2rel.vp.provider.VideoInfo;
-import com.github.squi2rel.vp.provider.VideoProviders;
+import com.github.squi2rel.vp.provider.YouTubeProvider;
 import com.github.squi2rel.vp.provider.bilibili.BiliBiliVideoProvider;
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
+import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
 import com.github.squi2rel.vp.video.ClientVideoArea;
 import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.video.MetaType;
@@ -42,13 +42,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
+import java.util.function.Predicate;
 
-public class VideoManagementScreen extends Screen {
+public class VideoManagementScreen extends Screen implements ServerStateScreen {
     private static final int SIDEBAR_WIDTH = 96;
     private static final int ROW_HEIGHT = 20;
     private static final int GAP = 8;
@@ -58,7 +58,7 @@ public class VideoManagementScreen extends Screen {
     private static final int PARAM_ROW_GAP = 30;
     private static final int LABEL_OFFSET = 11;
     private static final int SCREEN_SETTINGS_DISPLAY_Y = 18;
-    private static final int SCREEN_SETTINGS_META_Y = 156;
+    private static final int SCREEN_SETTINGS_META_Y = 188;
     private static final int SCREEN_SETTINGS_META_CONTENT_Y = SCREEN_SETTINGS_META_Y + 18;
     private static final int PLAYBACK_PROGRESS_HEIGHT = 18;
     private static final int PLAYBACK_PROGRESS_BOTTOM_MARGIN = 54;
@@ -132,6 +132,7 @@ public class VideoManagementScreen extends Screen {
     private boolean danmakuOverlayOpen;
     private boolean biliLocalQualityOverlayOpen;
     private boolean biliScreenQualityOverlayOpen;
+    private boolean youtubeScreenQualityOverlay;
     private boolean ccSubtitleOverlayOpen;
     private int danmakuOverlayX;
     private int danmakuOverlayY;
@@ -161,12 +162,13 @@ public class VideoManagementScreen extends Screen {
     }
 
     private VideoManagementScreen(VideoCreationEditor editor, ClientVideoScreen focusedScreen, Tab tab, boolean danmakuOverlayOpen) {
-        this(editor, focusedScreen, tab, danmakuOverlayOpen, false, false, false, false);
+        this(editor, focusedScreen, tab, danmakuOverlayOpen, false, false, false, false, false);
     }
 
     private VideoManagementScreen(VideoCreationEditor editor, ClientVideoScreen focusedScreen, Tab tab,
                                   boolean danmakuOverlayOpen, boolean biliLocalQualityOverlayOpen,
-                                  boolean biliScreenQualityOverlayOpen, boolean ccSubtitleOverlayOpen,
+                                  boolean biliScreenQualityOverlayOpen, boolean youtubeScreenQualityOverlay,
+                                  boolean ccSubtitleOverlayOpen,
                                   boolean playbackPreviewPinned) {
         super(VpTexts.tr("screen.videoplayer.management", "VideoPlayer Management"));
         this.editor = editor;
@@ -175,6 +177,7 @@ public class VideoManagementScreen extends Screen {
         this.danmakuOverlayOpen = danmakuOverlayOpen && tab == Tab.PLAYBACK;
         this.biliLocalQualityOverlayOpen = biliLocalQualityOverlayOpen && tab == Tab.PLAYBACK;
         this.biliScreenQualityOverlayOpen = biliScreenQualityOverlayOpen && tab == Tab.SCREEN_SETTINGS;
+        this.youtubeScreenQualityOverlay = youtubeScreenQualityOverlay && this.biliScreenQualityOverlayOpen;
         this.ccSubtitleOverlayOpen = ccSubtitleOverlayOpen && tab == Tab.PLAYBACK;
         VideoCreationEditor.Draft draft = editor.draft();
         if (focusedScreen != null) {
@@ -196,14 +199,15 @@ public class VideoManagementScreen extends Screen {
                                   int areaScroll, int screenScroll, int contentScroll, boolean confirmDeleteArea, boolean confirmDeleteScreen,
         MetaType customMetaType, boolean preserveDraftDisplay, boolean danmakuOverlayOpen) {
         this(editor, tab, selectedAreaName, selectedScreenName, areaScroll, screenScroll, contentScroll, confirmDeleteArea, confirmDeleteScreen,
-                customMetaType, preserveDraftDisplay, danmakuOverlayOpen, false, false, false, false);
+                customMetaType, preserveDraftDisplay, danmakuOverlayOpen, false, false, false, false, false);
     }
 
     private VideoManagementScreen(VideoCreationEditor editor, Tab tab, String selectedAreaName, String selectedScreenName,
                                   int areaScroll, int screenScroll, int contentScroll, boolean confirmDeleteArea, boolean confirmDeleteScreen,
                                   MetaType customMetaType, boolean preserveDraftDisplay,
                                   boolean danmakuOverlayOpen, boolean biliLocalQualityOverlayOpen,
-                                  boolean biliScreenQualityOverlayOpen, boolean ccSubtitleOverlayOpen,
+                                  boolean biliScreenQualityOverlayOpen, boolean youtubeScreenQualityOverlay,
+                                  boolean ccSubtitleOverlayOpen,
                                   boolean playbackPreviewPinned) {
         super(VpTexts.tr("screen.videoplayer.management", "VideoPlayer Management"));
         this.editor = editor;
@@ -212,6 +216,7 @@ public class VideoManagementScreen extends Screen {
         this.danmakuOverlayOpen = danmakuOverlayOpen && tab == Tab.PLAYBACK;
         this.biliLocalQualityOverlayOpen = biliLocalQualityOverlayOpen && tab == Tab.PLAYBACK;
         this.biliScreenQualityOverlayOpen = biliScreenQualityOverlayOpen && tab == Tab.SCREEN_SETTINGS;
+        this.youtubeScreenQualityOverlay = youtubeScreenQualityOverlay && this.biliScreenQualityOverlayOpen;
         this.ccSubtitleOverlayOpen = ccSubtitleOverlayOpen && tab == Tab.PLAYBACK;
         this.selectedAreaName = selectedAreaName;
         this.selectedScreenName = selectedScreenName;
@@ -617,7 +622,10 @@ public class VideoManagementScreen extends Screen {
                 biliLocalQualityOverlayOpen = false;
                 ccSubtitleOverlayOpen = false;
             }
-            if (target != Tab.SCREEN_SETTINGS) biliScreenQualityOverlayOpen = false;
+            if (target != Tab.SCREEN_SETTINGS) {
+                biliScreenQualityOverlayOpen = false;
+                youtubeScreenQualityOverlay = false;
+            }
             reopen(null);
         }).selected(tab == target);
         button.active = tab != target;
@@ -701,7 +709,7 @@ public class VideoManagementScreen extends Screen {
         VideoCreationEditor.Draft draft = editor.draft();
         row += 44;
         if (draft.operation == VideoCreationEditor.Operation.CREATE_AREA) {
-            nameField = textField(x, row, Math.min(260, contentW), draft.name.isBlank() ? editor.suggestedAreaName() : draft.name, VideoScreen.MAX_NAME_LENGTH);
+            nameField = textField(x, row, Math.min(260, contentW), draft.name.isBlank() ? editor.suggestedAreaName() : draft.name, VideoScreen.MAX_NAME_BYTES, VideoScreen::validNameInput);
             row += FORM_ROW_GAP;
             int buttonW = actionButtonWidth(contentW, 3);
             VpButtonWidget selectArea = button(selectionButtonText(), x, row, buttonW, this::toggleSelection).selected(editor.selecting());
@@ -722,15 +730,15 @@ public class VideoManagementScreen extends Screen {
         ClientVideoScreen screen = selectedScreen();
         int nameW = Math.min(260, contentW);
         if (draft.operation == VideoCreationEditor.Operation.CREATE_SCREEN) {
-            nameField = textField(x, row, nameW, draft.name.isBlank() ? editor.suggestedScreenName(selectedAreaName) : draft.name, VideoScreen.MAX_NAME_LENGTH);
+            nameField = textField(x, row, nameW, draft.name.isBlank() ? editor.suggestedScreenName(selectedAreaName) : draft.name, VideoScreen.MAX_NAME_BYTES, VideoScreen::validNameInput);
         } else {
-            nameField = textField(x, row, nameW, selectedScreenName == null ? "" : selectedScreenName, VideoScreen.MAX_NAME_LENGTH);
+            nameField = textField(x, row, nameW, selectedScreenName == null ? "" : selectedScreenName, VideoScreen.MAX_NAME_BYTES, VideoScreen::validNameInput);
             nameField.active = false;
         }
         row += FORM_ROW_GAP;
         int sourceButtonW = 72;
         int sourceW = Math.max(72, Math.min(260, contentW - sourceButtonW - GAP));
-        sourceField = textField(x, row, sourceW, draft.operation == VideoCreationEditor.Operation.EDIT_SCREEN_GEOMETRY && screen != null ? safe(screen.source) : safe(draft.source), VideoScreen.MAX_NAME_LENGTH);
+        sourceField = textField(x, row, sourceW, draft.operation == VideoCreationEditor.Operation.EDIT_SCREEN_GEOMETRY && screen != null ? safe(screen.source) : safe(draft.source), VideoScreen.MAX_NAME_BYTES, VideoScreen::validNameInput);
         button(VpTexts.tr("button.videoplayer.select", "Select"), x + sourceW + GAP, row, sourceButtonW, this::cycleSource).active = area != null;
         row += FORM_ROW_GAP;
         int typeW = actionButtonWidth(contentW, 2);
@@ -872,7 +880,7 @@ public class VideoManagementScreen extends Screen {
         int playButtonW = contentW < 260 ? 58 : 72;
         int idleListButtonW = contentW < 260 ? 72 : 84;
         int urlW = Math.max(70, contentW - playButtonW - idleListButtonW - GAP * 2);
-        urlField = textField(x, row, urlW, "", VideoScreen.MAX_PLAY_URL_LENGTH);
+        urlField = textField(x, row, urlW, "", VideoScreen.MAX_PLAY_URL_BYTES, VideoScreen::validPlayUrlInput);
         VpButtonWidget play = button(VpTexts.tr("button.videoplayer.play", "Play"), x + urlW + GAP, row, playButtonW, button -> {
             ClientVideoScreen screen = selectedScreen();
             if (screen == null || urlField.getText().isBlank()) return;
@@ -979,6 +987,7 @@ public class VideoManagementScreen extends Screen {
             danmakuOverlayOpen = !danmakuOverlayOpen;
             biliLocalQualityOverlayOpen = false;
             biliScreenQualityOverlayOpen = false;
+            youtubeScreenQualityOverlay = false;
             clearAndInit();
         }).selected(danmakuOverlayOpen);
         danmakuSettings.active = true;
@@ -994,6 +1003,7 @@ public class VideoManagementScreen extends Screen {
             danmakuOverlayOpen = false;
             biliLocalQualityOverlayOpen = false;
             biliScreenQualityOverlayOpen = false;
+            youtubeScreenQualityOverlay = false;
             clearAndInit();
         }).selected(ccSubtitleOverlayOpen || (playbackScreen != null && playbackScreen.subtitles().hasSelectedTrack()));
         ccSubtitle.active = playbackScreen != null && playbackScreen.subtitles().availableForCurrentVideo();
@@ -1009,9 +1019,10 @@ public class VideoManagementScreen extends Screen {
             danmakuOverlayOpen = false;
             ccSubtitleOverlayOpen = false;
             biliScreenQualityOverlayOpen = false;
+            youtubeScreenQualityOverlay = false;
             clearAndInit();
         }).selected(biliLocalQualityOverlayOpen);
-        quality.active = !currentAvailableBiliQualities().isEmpty();
+        quality.active = currentBiliInfo(playbackScreen) != null || currentYouTubeInfo(playbackScreen) != null;
         if (biliLocalQualityOverlayOpen && quality.active) {
             initBiliLocalQualityOverlay(quality.getRight(), row - 144, x, x + contentW);
         } else if (biliLocalQualityOverlayOpen) {
@@ -1052,18 +1063,36 @@ public class VideoManagementScreen extends Screen {
         danmaku.active = screen != null && canScreen(VideoPermissionAction.SET_METADATA, screen);
         row += FORM_ROW_GAP;
         VpButtonWidget biliQuality = button(screenBiliQualityButtonText(screen), x, row, contentW, () -> {
-            boolean open = !biliScreenQualityOverlayOpen;
+            boolean open = !biliScreenQualityOverlayOpen || youtubeScreenQualityOverlay;
             biliScreenQualityOverlayOpen = open;
+            youtubeScreenQualityOverlay = false;
             if (open) biliQualityOverlayScroll = 0;
             danmakuOverlayOpen = false;
             biliLocalQualityOverlayOpen = false;
             clearAndInit();
-        }).selected(biliScreenQualityOverlayOpen);
+        }).selected(biliScreenQualityOverlayOpen && !youtubeScreenQualityOverlay);
         biliQuality.active = screen != null && canScreen(VideoPermissionAction.SET_METADATA, screen);
-        if (biliScreenQualityOverlayOpen && biliQuality.active) {
+        if (biliScreenQualityOverlayOpen && !youtubeScreenQualityOverlay && biliQuality.active) {
             initBiliScreenQualityOverlay(biliQuality.getRight(), row + CONTROL_HEIGHT + 6, x, x + contentW);
-        } else if (biliScreenQualityOverlayOpen) {
+        } else if (biliScreenQualityOverlayOpen && !youtubeScreenQualityOverlay && !biliQuality.active) {
             biliScreenQualityOverlayOpen = false;
+        }
+        row += FORM_ROW_GAP;
+        VpButtonWidget youtubeQuality = button(screenYouTubeQualityButtonText(screen), x, row, contentW, () -> {
+            boolean open = !biliScreenQualityOverlayOpen || !youtubeScreenQualityOverlay;
+            biliScreenQualityOverlayOpen = open;
+            youtubeScreenQualityOverlay = open;
+            if (open) biliQualityOverlayScroll = 0;
+            danmakuOverlayOpen = false;
+            biliLocalQualityOverlayOpen = false;
+            clearAndInit();
+        }).selected(biliScreenQualityOverlayOpen && youtubeScreenQualityOverlay);
+        youtubeQuality.active = screen != null && canScreen(VideoPermissionAction.SET_METADATA, screen);
+        if (biliScreenQualityOverlayOpen && youtubeScreenQualityOverlay && youtubeQuality.active) {
+            initYouTubeScreenQualityOverlay(youtubeQuality.getRight(), row + CONTROL_HEIGHT + 6, x, x + contentW);
+        } else if (biliScreenQualityOverlayOpen && youtubeScreenQualityOverlay && !youtubeQuality.active) {
+            biliScreenQualityOverlayOpen = false;
+            youtubeScreenQualityOverlay = false;
         }
         row += FORM_ROW_GAP;
         VpButtonWidget mapping = button(VpTexts.tr("button.videoplayer.open_mapping_editor", "Open Mapping Editor"), x, row, contentW, () -> {
@@ -1192,9 +1221,16 @@ public class VideoManagementScreen extends Screen {
         VpUiRenderer.drawBox(context, danmakuOverlayX, danmakuOverlayY, danmakuOverlayW, danmakuOverlayH,
                 VpUiRenderer.withAlpha(VpUiRenderer.darken(THEME.panelBackgroundColor(), 0.04f), 0xF2),
                 THEME.panelBorderColor());
-        Text title = biliLocalQualityOverlayOpen
-                ? VpTexts.tr("label.videoplayer.bili_quality.local", "Bili Quality")
-                : VpTexts.tr("label.videoplayer.bili_quality.screen_limit", "Bili Limit");
+        Text title;
+        if (biliLocalQualityOverlayOpen) {
+            title = currentYouTubeInfo(selectedPlaybackScreen()) != null
+                    ? VpTexts.tr("label.videoplayer.youtube_quality.local", "YouTube Quality")
+                    : VpTexts.tr("label.videoplayer.bili_quality.local", "Bili Quality");
+        } else {
+            title = youtubeScreenQualityOverlay
+                    ? VpTexts.tr("label.videoplayer.youtube_quality.screen_limit", "YouTube Limit")
+                    : VpTexts.tr("label.videoplayer.bili_quality.screen_limit", "Bili Limit");
+        }
         drawLabel(context, title, danmakuOverlayX + 10, danmakuOverlayY + 8, THEME.primaryTextColor());
         int left = danmakuOverlayX + BILI_QUALITY_OVERLAY_PADDING;
         int right = danmakuOverlayX + danmakuOverlayW - BILI_QUALITY_OVERLAY_PADDING;
@@ -1244,6 +1280,7 @@ public class VideoManagementScreen extends Screen {
         danmakuOverlayOpen = false;
         biliLocalQualityOverlayOpen = false;
         biliScreenQualityOverlayOpen = false;
+        youtubeScreenQualityOverlay = false;
         ccSubtitleOverlayOpen = false;
     }
 
@@ -1270,7 +1307,11 @@ public class VideoManagementScreen extends Screen {
         if (biliLocalQualityOverlayOpen) {
             initBiliLocalQualityOverlay(anchorRight, anchorY, mainX(), mainX() + mainW());
         } else if (biliScreenQualityOverlayOpen) {
-            initBiliScreenQualityOverlay(anchorRight, anchorY, mainX(), mainX() + mainW());
+            if (youtubeScreenQualityOverlay) {
+                initYouTubeScreenQualityOverlay(anchorRight, anchorY, mainX(), mainX() + mainW());
+            } else {
+                initBiliScreenQualityOverlay(anchorRight, anchorY, mainX(), mainX() + mainW());
+            }
         } else if (ccSubtitleOverlayOpen) {
             initCcSubtitleOverlay(anchorRight, anchorY, mainX(), mainX() + mainW());
         }
@@ -1510,10 +1551,12 @@ public class VideoManagementScreen extends Screen {
         int scaleSliderW = actionButtonWidth(contentW, 2);
         int danmakuRow = y + FORM_ROW_GAP;
         int biliQualityRow = danmakuRow + FORM_ROW_GAP;
-        int mappingRow = biliQualityRow + FORM_ROW_GAP;
+        int youtubeQualityRow = biliQualityRow + FORM_ROW_GAP;
+        int mappingRow = youtubeQualityRow + FORM_ROW_GAP;
         int scaleRow = mappingRow + FORM_ROW_GAP;
         drawLabel(context, VpTexts.tr("label.videoplayer.danmaku", "Danmaku"), x, danmakuRow - LABEL_OFFSET, THEME.secondaryTextColor());
         drawLabel(context, VpTexts.tr("label.videoplayer.bili_quality.screen_limit", "Bili Limit"), x, biliQualityRow - LABEL_OFFSET, THEME.secondaryTextColor());
+        drawLabel(context, VpTexts.tr("label.videoplayer.youtube_quality.screen_limit", "YouTube Limit"), x, youtubeQualityRow - LABEL_OFFSET, THEME.secondaryTextColor());
         drawLabel(context, VpTexts.tr("label.videoplayer.vertex_mapping", "Vertex Mapping"), x, mappingRow - LABEL_OFFSET, THEME.secondaryTextColor());
         drawLabel(context, "Scale X", x, scaleRow - LABEL_OFFSET, THEME.secondaryTextColor());
         drawLabel(context, "Scale Y", x + scaleSliderW + GAP, scaleRow - LABEL_OFFSET, THEME.secondaryTextColor());
@@ -1567,8 +1610,13 @@ public class VideoManagementScreen extends Screen {
     }
 
     private TextFieldWidget textField(int x, int y, int width, String text, int maxLength) {
+        return textField(x, y, width, text, maxLength, value -> true);
+    }
+
+    private TextFieldWidget textField(int x, int y, int width, String text, int maxLength, Predicate<String> predicate) {
         VpTextFieldWidget field = new VpTextFieldWidget(textRenderer, x, y, Math.max(40, width), CONTROL_HEIGHT, Text.empty(), THEME);
         field.setMaxLength(maxLength);
+        field.setTextPredicate(predicate);
         field.setText(text == null ? "" : text);
         addDrawableChild(field);
         registerDrawable(field, y, CONTROL_HEIGHT);
@@ -1746,10 +1794,21 @@ public class VideoManagementScreen extends Screen {
     }
 
     private void initBiliLocalQualityOverlay(int anchorRight, int anchorY, int minX, int maxX) {
+        if (currentYouTubeInfo(selectedPlaybackScreen()) != null) {
+            List<Integer> available = currentAvailableYouTubeQualities();
+            ArrayList<Integer> options = new ArrayList<>();
+            options.add(YouTubeQuality.AUTO);
+            options.addAll(available);
+            int displayQuality = displayedLocalYouTubeQuality(available);
+            initQualityOverlay(anchorRight, anchorY, minX, maxX, options, displayQuality,
+                    this::selectLocalYouTubeQuality, this::youtubeQualityText);
+            return;
+        }
         List<Integer> options = currentAvailableBiliQualities();
         int displayQuality = displayedLocalBiliQuality(options);
         int selected = options.contains(displayQuality) ? displayQuality : Integer.MIN_VALUE;
-        initBiliQualityOverlay(anchorRight, anchorY, minX, maxX, options, selected, this::selectLocalBiliQuality);
+        initQualityOverlay(anchorRight, anchorY, minX, maxX, options, selected,
+                this::selectLocalBiliQuality, this::biliQualityText);
     }
 
     private void initBiliScreenQualityOverlay(int anchorRight, int anchorY, int minX, int maxX) {
@@ -1760,7 +1819,22 @@ public class VideoManagementScreen extends Screen {
         }
         ClientVideoScreen screen = selectedScreen();
         int selected = screen == null ? BiliQuality.UNLIMITED : BiliQuality.normalizeScreenLimit(screen.metadata.getInt(ScreenMetadata.KEY_BILIBILI_QUALITY, BiliQuality.UNLIMITED));
-        initBiliQualityOverlay(anchorRight, anchorY, minX, maxX, options, selected, this::selectScreenBiliQuality);
+        initQualityOverlay(anchorRight, anchorY, minX, maxX, options, selected,
+                this::selectScreenBiliQuality, this::biliQualityText);
+    }
+
+    private void initYouTubeScreenQualityOverlay(int anchorRight, int anchorY, int minX, int maxX) {
+        ArrayList<Integer> options = new ArrayList<>();
+        options.add(YouTubeQuality.AUTO);
+        for (int option : YouTubeQuality.options()) {
+            options.add(option);
+        }
+        ClientVideoScreen screen = selectedScreen();
+        int selected = screen == null ? YouTubeQuality.AUTO : YouTubeQuality.normalizeScreenLimit(
+                screen.metadata.getInt(ScreenMetadata.KEY_YOUTUBE_QUALITY, YouTubeQuality.AUTO)
+        );
+        initQualityOverlay(anchorRight, anchorY, minX, maxX, options, selected,
+                this::selectScreenYouTubeQuality, this::youtubeQualityText);
     }
 
     private void initCcSubtitleOverlay(int anchorRight, int anchorY, int minX, int maxX) {
@@ -1820,7 +1894,8 @@ public class VideoManagementScreen extends Screen {
         }
     }
 
-    private void initBiliQualityOverlay(int anchorRight, int anchorY, int minX, int maxX, List<Integer> options, int selected, IntConsumer selector) {
+    private void initQualityOverlay(int anchorRight, int anchorY, int minX, int maxX, List<Integer> options,
+                                    int selected, IntConsumer selector, IntFunction<Text> labeler) {
         if (options == null || options.isEmpty()) {
             closeOverlays();
             return;
@@ -1849,7 +1924,7 @@ public class VideoManagementScreen extends Screen {
         for (int i = 0; i < options.size(); i++) {
             int option = options.get(i);
             int buttonY = rowY + i * (CONTROL_HEIGHT + BILI_QUALITY_OVERLAY_BUTTON_GAP);
-            VpButtonWidget button = danmakuOverlayButton(biliQualityText(option), innerX, buttonY, buttonW, ignored -> selector.accept(option));
+            VpButtonWidget button = danmakuOverlayButton(labeler.apply(option), innerX, buttonY, buttonW, ignored -> selector.accept(option));
             button.clip(innerX, biliQualityOverlayViewportTop, innerX + buttonW, biliQualityOverlayViewportBottom);
             button.selected(option == selected);
         }
@@ -1933,6 +2008,14 @@ public class VideoManagementScreen extends Screen {
     }
 
     private Text localBiliQualityButtonText() {
+        if (currentYouTubeInfo(selectedPlaybackScreen()) != null) {
+            List<Integer> available = currentAvailableYouTubeQualities();
+            int quality = displayedLocalYouTubeQuality(available);
+            return VpTexts.tr("label.videoplayer.youtube_quality.local_value", "YouTube: %s", youtubeQualityText(quality).getString());
+        }
+        if (currentBiliInfo(selectedPlaybackScreen()) == null) {
+            return VpTexts.tr("label.videoplayer.quality", "Quality");
+        }
         int quality = displayedLocalBiliQuality(currentAvailableBiliQualities());
         return VpTexts.tr("label.videoplayer.bili_quality.local_value", "Bili: %s", biliQualityText(quality).getString());
     }
@@ -1968,8 +2051,19 @@ public class VideoManagementScreen extends Screen {
         return VpTexts.tr("label.videoplayer.bili_quality.screen_value", "Bili Limit: %s", biliQualityText(quality).getString());
     }
 
+    private Text screenYouTubeQualityButtonText(ClientVideoScreen screen) {
+        int quality = screen == null ? YouTubeQuality.AUTO : YouTubeQuality.normalizeScreenLimit(
+                screen.metadata.getInt(ScreenMetadata.KEY_YOUTUBE_QUALITY, YouTubeQuality.AUTO)
+        );
+        return VpTexts.tr("label.videoplayer.youtube_quality.screen_value", "YouTube Limit: %s", youtubeQualityText(quality).getString());
+    }
+
     private Text biliQualityText(int quality) {
         return VpTexts.tr(BiliQuality.translationKey(quality), BiliQuality.fallbackLabel(quality));
+    }
+
+    private Text youtubeQualityText(int quality) {
+        return VpTexts.tr(YouTubeQuality.translationKey(quality), YouTubeQuality.fallbackLabel(quality));
     }
 
     private List<Integer> currentAvailableBiliQualities() {
@@ -1978,10 +2072,26 @@ public class VideoManagementScreen extends Screen {
         return BiliBiliVideoProvider.availableQualities(info.rawPath());
     }
 
+    private List<Integer> currentAvailableYouTubeQualities() {
+        VideoInfo info = currentYouTubeInfo(selectedPlaybackScreen());
+        if (info == null) return List.of();
+        return YouTubeProvider.availableQualities(info.rawPath());
+    }
+
     private int displayedLocalBiliQuality(List<Integer> available) {
         int configured = VideoPlayerClient.config == null ? BiliQuality.DEFAULT_QN : BiliQuality.normalizeClient(VideoPlayerClient.config.bilibiliQuality);
         if (available == null || available.isEmpty() || available.contains(configured)) return configured;
         return BiliQuality.bestAtOrBelow(available, configured);
+    }
+
+    private int displayedLocalYouTubeQuality(List<Integer> available) {
+        int configured = VideoPlayerClient.config == null
+                ? YouTubeQuality.AUTO
+                : YouTubeQuality.normalizeClient(VideoPlayerClient.config.youtubeQuality);
+        if (configured == YouTubeQuality.AUTO || available == null || available.isEmpty() || available.contains(configured)) {
+            return configured;
+        }
+        return YouTubeQuality.bestAtOrBelow(available, configured);
     }
 
     private VideoInfo currentBiliInfo(ClientVideoScreen screen) {
@@ -1991,56 +2101,52 @@ public class VideoManagementScreen extends Screen {
         return BiliBiliVideoProvider.isBiliVideoRawPath(info.rawPath()) ? info : null;
     }
 
+    private VideoInfo currentYouTubeInfo(ClientVideoScreen screen) {
+        if (screen == null) return null;
+        VideoInfo info = screen.currentPlaybackInfo();
+        if (info == null || info.rawPath() == null || info.rawPath().isBlank()) return null;
+        return YouTubeProvider.isYouTubeRawPath(info.rawPath()) ? info : null;
+    }
+
     private void selectLocalBiliQuality(int quality) {
         if (!currentAvailableBiliQualities().contains(quality)) return;
         ClientVideoScreen screen = selectedPlaybackScreen();
         VideoInfo info = currentBiliInfo(screen);
         if (screen == null || info == null) return;
-        long progress = screen.player == null ? 0L : Math.max(0L, screen.player.getProgress());
-        boolean idle = screen.isIdlePlaying();
-        boolean paused = screen.player != null && screen.player.canPause() && screen.player.isPaused();
         VideoPlayerClient.config.bilibiliQuality = BiliQuality.normalizeClient(quality);
         VideoPlayerClient.saveConfig();
         biliLocalQualityOverlayOpen = false;
         clearAndInit();
-        reloadBiliPlayback(screen, info, progress, idle, paused);
+        ClientPacketHandler.reloadQualityPlayback(screen);
+    }
+
+    private void selectLocalYouTubeQuality(int quality) {
+        List<Integer> available = currentAvailableYouTubeQualities();
+        if (quality != YouTubeQuality.AUTO && !available.contains(quality)) return;
+        ClientVideoScreen screen = selectedPlaybackScreen();
+        VideoInfo info = currentYouTubeInfo(screen);
+        if (screen == null || info == null) return;
+        VideoPlayerClient.config.youtubeQuality = YouTubeQuality.normalizeClient(quality);
+        VideoPlayerClient.saveConfig();
+        biliLocalQualityOverlayOpen = false;
+        clearAndInit();
+        ClientPacketHandler.reloadQualityPlayback(screen);
     }
 
     private void selectScreenBiliQuality(int quality) {
         ClientVideoScreen screen = selectedScreen();
         if (screen == null) return;
         biliScreenQualityOverlayOpen = false;
+        youtubeScreenQualityOverlay = false;
         setMetadata(screen, ScreenMetadata.KEY_BILIBILI_QUALITY, MetaValue.ofInt(BiliQuality.normalizeScreenLimit(quality)));
     }
 
-    private void reloadBiliPlayback(ClientVideoScreen screen, VideoInfo current, long progress, boolean idle, boolean paused) {
-        if (screen == null || current == null || current.rawPath() == null || current.rawPath().isBlank()) return;
-        CompletableFuture<VideoInfo> video = VideoProviders.from(current.rawPath(), new NamedProviderSource(current.playerName(), effectiveBiliQuality(screen)));
-        if (video == null) return;
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                return video.get();
-            } catch (Exception e) {
-                return null;
-            }
-        }).thenAccept(resolved -> {
-            if (resolved == null) return;
-            client.execute(() -> {
-                if (!VideoPlayerClient.screens.contains(screen)) return;
-                if (progress > 0) screen.setToSeek(progress);
-                long durationMs = resolved.durationMs() > 0 ? resolved.durationMs() : current.durationMs();
-                screen.play(new VideoInfo(current.playerName(), current.name(), resolved.path(), resolved.rawPath(), resolved.expire(), resolved.seekable(), resolved.params(), durationMs), idle);
-                if (paused && screen.player != null && screen.player.canPause()) {
-                    screen.player.pause(true);
-                }
-            });
-        });
-    }
-
-    private int effectiveBiliQuality(ClientVideoScreen screen) {
-        int local = VideoPlayerClient.config == null ? BiliQuality.DEFAULT_QN : VideoPlayerClient.config.bilibiliQuality;
-        int limit = screen == null || screen.metadata == null ? BiliQuality.UNLIMITED : screen.metadata.getInt(ScreenMetadata.KEY_BILIBILI_QUALITY, BiliQuality.UNLIMITED);
-        return BiliQuality.effective(local, limit);
+    private void selectScreenYouTubeQuality(int quality) {
+        ClientVideoScreen screen = selectedScreen();
+        if (screen == null) return;
+        biliScreenQualityOverlayOpen = false;
+        youtubeScreenQualityOverlay = false;
+        setMetadata(screen, ScreenMetadata.KEY_YOUTUBE_QUALITY, MetaValue.ofInt(YouTubeQuality.normalizeScreenLimit(quality)));
     }
 
     private Consumer<ClientPacketHandler.RequestResult> permissionFeedback(VpButtonWidget button) {
@@ -2515,10 +2621,14 @@ public class VideoManagementScreen extends Screen {
     private void setMetadata(ClientVideoScreen screen, String key, MetaValue value, Consumer<ClientPacketHandler.RequestResult> callback) {
         if (isReservedMetaKey(key)) return;
         try {
-            screen.metadata.set(key, value);
-            screen.metadataChanged();
-            ClientPacketHandler.setMetadata(screen, key, value, callback);
-            reopen(null);
+            ClientPacketHandler.setMetadata(screen, key, value, result -> {
+                if (result != null && result.status() == RequestResultStatus.OK
+                        && VideoPlayerClient.screens.contains(screen)
+                        && client.currentScreen instanceof VideoManagementScreen) {
+                    reopen(null);
+                }
+                if (callback != null) callback.accept(result);
+            });
         } catch (Exception ignored) {
         }
     }
@@ -2530,10 +2640,14 @@ public class VideoManagementScreen extends Screen {
     private void removeMetadata(ClientVideoScreen screen, String key, Consumer<ClientPacketHandler.RequestResult> callback) {
         if (isReservedMetaKey(key)) return;
         try {
-            screen.metadata.remove(key);
-            screen.metadataChanged();
-            ClientPacketHandler.removeMetadata(screen, key, callback);
-            reopen(null);
+            ClientPacketHandler.removeMetadata(screen, key, result -> {
+                if (result != null && result.status() == RequestResultStatus.OK
+                        && VideoPlayerClient.screens.contains(screen)
+                        && client.currentScreen instanceof VideoManagementScreen) {
+                    reopen(null);
+                }
+                if (callback != null) callback.accept(result);
+            });
         } catch (Exception ignored) {
         }
     }
@@ -2711,7 +2825,8 @@ public class VideoManagementScreen extends Screen {
     private void reopen(ClientVideoScreen focusedScreen, boolean preserveDraftDisplay) {
         if (focusedScreen != null) {
             client.setScreen(new VideoManagementScreen(editor, focusedScreen, tab,
-                    danmakuOverlayOpen, biliLocalQualityOverlayOpen, biliScreenQualityOverlayOpen, ccSubtitleOverlayOpen,
+                    danmakuOverlayOpen, biliLocalQualityOverlayOpen, biliScreenQualityOverlayOpen,
+                    youtubeScreenQualityOverlay, ccSubtitleOverlayOpen,
                     playbackPreviewPinned));
             return;
         }
@@ -2730,6 +2845,7 @@ public class VideoManagementScreen extends Screen {
                 danmakuOverlayOpen,
                 biliLocalQualityOverlayOpen,
                 biliScreenQualityOverlayOpen,
+                youtubeScreenQualityOverlay,
                 ccSubtitleOverlayOpen,
                 playbackPreviewPinned
         ));

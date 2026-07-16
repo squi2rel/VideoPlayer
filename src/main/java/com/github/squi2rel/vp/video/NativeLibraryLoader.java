@@ -31,6 +31,17 @@ final class NativeLibraryLoader {
         prepareWindowsDllDirectory(library.toAbsolutePath().getParent());
     }
 
+    static void clearWindowsDllDirectory() {
+        if (!"windows".equals(NativeDownloadConfig.osKey())) return;
+        try {
+            if (!Kernel32Holder.KERNEL32.SetDllDirectoryW(null)) {
+                VideoPlayerMain.LOGGER.debug("Failed to clear Windows DLL directory");
+            }
+        } catch (Throwable t) {
+            VideoPlayerMain.LOGGER.debug("Failed to clear Windows DLL directory", t);
+        }
+    }
+
     private static final class Kernel32Holder {
         private static final Kernel32 KERNEL32 = Native.load("kernel32", Kernel32.class);
     }

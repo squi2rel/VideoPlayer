@@ -1,15 +1,17 @@
 package com.github.squi2rel.vp;
 
 import com.github.squi2rel.vp.network.VideoPayload;
+import com.github.squi2rel.vp.network.VideoProtocol;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.VideoProviders;
 import com.github.squi2rel.vp.provider.YouTubeProvider;
 import com.github.squi2rel.vp.provider.bilibili.BiliBiliProvider;
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
+import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
 import com.github.squi2rel.vp.creation.StartupGuideScreen;
 import com.github.squi2rel.vp.creation.VideoCreationEditor;
 import com.github.squi2rel.vp.creation.BiliLoginScreen;
-import com.github.squi2rel.vp.creation.MpvFilterGraphScreen;
+import com.github.squi2rel.vp.creation.ServerStateScreen;
 import com.github.squi2rel.vp.danmaku.BiliAuthRefresher;
 import com.github.squi2rel.vp.danmaku.BiliCookie;
 import com.github.squi2rel.vp.danmaku.ClientDanmakuController;
@@ -50,12 +52,15 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.profiler.Profiler;
 import net.minecraft.util.profiler.Profilers;
-import org.apache.commons.lang3.StringUtils;
 import org.joml.Vector3f;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -64,7 +69,10 @@ import static com.github.squi2rel.vp.VideoPlayerMain.error;
 
 @SuppressWarnings({"DataFlowIssue"})
 public class VideoPlayerClient implements ClientModInitializer {
+    private static final int HANDSHAKE_INTERVAL_TICKS = 40;
+    private static final int CONNECTING_HANDSHAKE_INTERVAL_TICKS = 20;
     public static final Path configPath = FabricLoader.getInstance().getConfigDir().resolve("videoplayer").resolve("videoplayer-client.json");
+    private static final Path startupGuideVersionPath = configPath.getParent().resolve("startup-guide-version.txt");
     public static final MinecraftClient client = MinecraftClient.getInstance();
     public static Config config;
     private static final Gson gson = new Gson();
@@ -74,13 +82,16 @@ public class VideoPlayerClient implements ClientModInitializer {
     private static final TouchHandler touchHandler = new TouchHandler();
     private static ClientVideoScreen currentLooking, currentScreen;
     private static boolean isInArea = false;
-    private static BossBar bossBar = null;
+    private static final BossBar bossBar = new ClientBossBar(UUID.randomUUID(), Text.of(""), 0, BossBar.Color.WHITE, BossBar.Style.PROGRESS, false, false, false);
     private static boolean bossBarAdded = false;
     private static boolean keyPressed = false;
     private static boolean startupGuideOpened = false;
     private static boolean pendingStartupGuideScreen = false;
     private static boolean pendingBiliLoginScreen = false;
-    private static boolean pendingMpvFilterGraphScreen = false;
+    private static int handshakeTicks;
+    private static boolean protocolRejected;
+    private static boolean protocolMismatchShown;
+    private static long handshakeNonce;
 
     public static boolean connected = false;
     public static String remoteControlName = "minecraft:iron_ingot";
@@ -137,21 +148,26 @@ public class VideoPlayerClient implements ClientModInitializer {
         loadConfig();
         BiliBiliProvider.setCookieSupplier(BiliCookie::header);
         BiliAuthRefresher.checkOnStartup();
-        ClientTickEvents.END_CLIENT_TICK.register(client -> BiliAuthRefresher.tick());
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            BiliAuthRefresher.tick();
+            tickHandshake(client);
+        });
         registerStartupGuide();
         registerStartupGuideScreenOpener();
         registerBiliLoginScreenOpener();
-        registerMpvFilterGraphScreenOpener();
         VideoProviders.register();
         disconnectHandler = () -> client.execute(VideoPlayerClient::cleanupClientState);
         ClientLifecycleEvents.CLIENT_STOPPING.register(ignored -> cleanupClientState());
         if (Vivecraft.loaded) LOGGER.info("Found Vivecraft");
         ClientPlayConnectionEvents.JOIN.register((h, s, c) -> {
-            if (config.alwaysConnected) ClientPacketHandler.config(VideoPlayerMain.version);
+            handshakeTicks = 0;
+            handshakeNonce = 0L;
+            connected = false;
+            protocolRejected = false;
+            protocolMismatchShown = false;
         });
         WorldRenderEvents.START_MAIN.register(e -> VideoPlayerClient.update());
         WorldRenderEvents.AFTER_ENTITIES.register(ScreenRenderer::render);
-        WorldRenderEvents.END_MAIN.register(e -> VideoPlayerClient.postUpdate());
         VideoCreationEditor.register();
         ClientPlayNetworking.registerGlobalReceiver(VideoPayload.ID, (p, c) -> {
             long receivedAt = System.currentTimeMillis();
@@ -228,8 +244,6 @@ public class VideoPlayerClient implements ClientModInitializer {
                         }))
                 .then(ClientCommandManager.literal("boot")
                         .executes(VideoPlayerClient::openStartupGuide))
-                .then(ClientCommandManager.literal("mpvFilter")
-                        .executes(VideoPlayerClient::openMpvFilterGraph))
                 .then(biliAuthCommand("biliAuth"))
                 .then(ClientCommandManager.literal("danmaku")
                         .executes(s -> {
@@ -485,7 +499,6 @@ public class VideoPlayerClient implements ClientModInitializer {
                 keyPressed = false;
             }
         });
-        bossBar = new ClientBossBar(UUID.randomUUID(), Text.of(""), 0, BossBar.Color.WHITE, BossBar.Style.PROGRESS, false, false, false);
     }
 
     private static LiteralArgumentBuilder<FabricClientCommandSource> biliAuthCommand(String literal) {
@@ -522,19 +535,15 @@ public class VideoPlayerClient implements ClientModInitializer {
         return 1;
     }
 
-    private static int openMpvFilterGraph(CommandContext<FabricClientCommandSource> s) {
-        pendingMpvFilterGraphScreen = true;
-        return 1;
-    }
-
     private static int setVideoBackend(CommandContext<FabricClientCommandSource> s, String backend) {
         config.videoBackend = VideoBackends.normalize(backend);
         saveConfig();
         if (VideoBackends.MPV.equals(config.videoBackend) && !MpvVideoBackend.isAvailable()) {
             LOGGER.warn("MPV backend selected but libmpv is not available", MpvVideoBackend.loadError());
+            pendingStartupGuideScreen = true;
             s.getSource().sendFeedback(VpTexts.tr(
                     "message.videoplayer.backend_mpv_unavailable",
-                    "Playback backend set to MPV, but libmpv failed to load on this system. New videos will fall back to VLC. Install system libmpv."
+                    "MPV is unavailable. The setup guide will open; download the MPV runtime there. New videos use VLC until installation finishes."
             ).formatted(Formatting.YELLOW));
             return 1;
         }
@@ -595,8 +604,12 @@ public class VideoPlayerClient implements ClientModInitializer {
     }
 
     private static void updateBossBar() {
+        ClientPlayNetworkHandler handler = client.getNetworkHandler();
+        if (handler == null) {
+            bossBarAdded = false;
+            return;
+        }
         if (currentLooking != null) {
-            ClientPlayNetworkHandler handler = client.getNetworkHandler();
             if (!bossBarAdded) {
                 handler.onBossBar(BossBarS2CPacket.add(bossBar));
                 bossBarAdded = true;
@@ -624,7 +637,6 @@ public class VideoPlayerClient implements ClientModInitializer {
             handler.onBossBar(BossBarS2CPacket.updateName(bossBar));
             handler.onBossBar(BossBarS2CPacket.updateProgress(bossBar));
         } else if (bossBarAdded) {
-            ClientPlayNetworkHandler handler = client.getNetworkHandler();
             handler.onBossBar(BossBarS2CPacket.remove(bossBar.getUuid()));
             bossBarAdded = false;
         }
@@ -691,13 +703,11 @@ public class VideoPlayerClient implements ClientModInitializer {
     }
 
     public static boolean checkVersion(String v) {
-        String[] p1 = StringUtils.split(v, '.');
-        String[] p2 = StringUtils.split(VideoPlayerMain.version, '.');
-        if (p1.length < 2 || p2.length < 2) return false;
-        return p1[0].equals(p2[0]) && p1[1].equals(p2[1]);
+        return VideoProtocol.compatible(VideoPlayerMain.version, v);
     }
 
     public static void update() {
+        ClientPacketHandler.tickPendingRequests();
         if (updated) return;
         Profiler profiler = Profilers.get();
         profiler.push("video");
@@ -716,7 +726,15 @@ public class VideoPlayerClient implements ClientModInitializer {
     }
 
     private static void cleanupClientState() {
+        if (client.currentScreen instanceof ServerStateScreen) {
+            client.setScreen(null);
+            if (client.player != null) {
+                client.player.sendMessage(VpTexts.tr("error.videoplayer.server_state_reset", "VideoPlayer server state was reset").formatted(Formatting.RED), false);
+            }
+        }
         connected = false;
+        handshakeNonce = 0L;
+        handshakeTicks = 0;
         for (ClientVideoArea area : new ArrayList<>(areas.values())) {
             area.remove();
         }
@@ -725,12 +743,69 @@ public class VideoPlayerClient implements ClientModInitializer {
             screen.cleanup();
         }
         screens.clear();
+        ClientPacketHandler.resetPendingRequests();
         ScreenVolumeCache.clear();
         ClientDanmakuRenderer.clearCache();
         Degree360Player.clearMeshCache();
         ClientPermissionCache.clear();
+        isInArea = false;
         currentLooking = null;
+        currentScreen = null;
+        remoteControl = false;
+        touchHandler.handle(null);
+        if (client.getNetworkHandler() != null) {
+            updateBossBar();
+        } else {
+            bossBarAdded = false;
+        }
         VideoCreationEditor.instance().clear();
+    }
+
+    public static void resetServerState() {
+        cleanupClientState();
+    }
+
+    public static boolean protocolRejected() {
+        return protocolRejected;
+    }
+
+    public static void acceptProtocol() {
+        protocolRejected = false;
+    }
+
+    static void setHandshakeNonce(long nonce) {
+        handshakeNonce = nonce;
+    }
+
+    public static void rejectProtocol(String remoteVersion) {
+        if (!protocolRejected) cleanupClientState();
+        protocolRejected = true;
+        connected = false;
+        if (protocolMismatchShown || client.player == null) return;
+        protocolMismatchShown = true;
+        client.player.sendMessage(VpTexts.tr(
+                "message.videoplayer.version_mismatch",
+                "VideoPlayer client and server must use the same 2.0.1 build. Local: %s, server: %s",
+                VideoPlayerMain.version, remoteVersion == null || remoteVersion.isBlank() ? "unknown" : remoteVersion
+        ).formatted(Formatting.RED), false);
+    }
+
+    private static void tickHandshake(MinecraftClient client) {
+        if (client.getNetworkHandler() == null || client.player == null) {
+            handshakeTicks = 0;
+            return;
+        }
+        if (protocolRejected) return;
+        if (!ClientPlayNetworking.canSend(VideoPayload.ID)) {
+            handshakeTicks = 0;
+            return;
+        }
+        if (handshakeTicks > 0) {
+            handshakeTicks--;
+            return;
+        }
+        handshakeTicks = connected ? HANDSHAKE_INTERVAL_TICKS : CONNECTING_HANDSHAKE_INTERVAL_TICKS;
+        ClientPacketHandler.config(VideoPlayerMain.version);
     }
 
     public static void postUpdate() {
@@ -741,6 +816,7 @@ public class VideoPlayerClient implements ClientModInitializer {
         profiler.push("updateFrame");
         for (ClientVideoScreen screen : screens) {
             if (!screen.isPostUpdate()) continue;
+            screen.swapTexture();
             screen.update();
         }
         profiler.pop();
@@ -761,12 +837,23 @@ public class VideoPlayerClient implements ClientModInitializer {
     }
 
     public static void saveConfig() {
+        Path temporary = configPath.resolveSibling(configPath.getFileName() + ".tmp-" + UUID.randomUUID());
         try {
             applyNativePlatformConfig();
             Files.createDirectories(configPath.getParent());
-            Files.writeString(configPath, gson.toJson(config));
+            Files.writeString(temporary, gson.toJson(config), StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            try {
+                Files.move(temporary, configPath, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                Files.move(temporary, configPath, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
+        } finally {
+            try {
+                Files.deleteIfExists(temporary);
+            } catch (IOException ignored) {
+            }
         }
     }
 
@@ -778,18 +865,31 @@ public class VideoPlayerClient implements ClientModInitializer {
         if (config == null) return;
         config.startupGuideShown = true;
         saveConfig();
+        try {
+            Files.writeString(startupGuideVersionPath, VideoPlayerMain.version);
+        } catch (IOException e) {
+            LOGGER.warn("Failed to write startup guide version file {}", startupGuideVersionPath, e);
+        }
     }
 
     public static void applyNativePlatformConfig() {
         if (config == null) return;
-        config.nativeVlcPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(config.nativeVlcPlatform);
-        config.nativeMpvPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(config.nativeMpvPlatform);
-        NativePackageManager.selectPlatform(NativePackageManager.BACKEND_VLC, config.nativeVlcPlatform);
-        NativePackageManager.selectPlatform(NativePackageManager.BACKEND_MPV, config.nativeMpvPlatform);
+        if (VideoPlayerMain.android) {
+            config.videoBackend = VideoBackends.VLC;
+            config.nativeVlcPlatform = NativeDownloadConfig.platformKey();
+            NativePackageManager.selectPlatform(NativePackageManager.BACKEND_VLC, config.nativeVlcPlatform);
+            StreamListener.configurePreferredBackend(VideoBackends.VLC);
+        } else {
+            config.nativeVlcPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(config.nativeVlcPlatform);
+            config.nativeMpvPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(config.nativeMpvPlatform);
+            NativePackageManager.selectPlatform(NativePackageManager.BACKEND_VLC, config.nativeVlcPlatform);
+            NativePackageManager.selectPlatform(NativePackageManager.BACKEND_MPV, config.nativeMpvPlatform);
+        }
         StreamListener.configureProxy(config.nativeDownloadProxy);
         YouTubeProvider.configureProxy(config.nativeDownloadProxy);
-        StreamListener.configureYtdlPath(config.mpvYtdlPath);
-        YouTubeProvider.configureYtdlPath(config.mpvYtdlPath);
+        String effectiveYtdlPath = YtDlpManager.effectiveExecutable(config.mpvYtdlPath);
+        StreamListener.configureYtdlPath(effectiveYtdlPath);
+        YouTubeProvider.configureYtdlPath(effectiveYtdlPath);
     }
 
     public static NativeDownloadConfig nativeDownloadConfig() {
@@ -814,16 +914,30 @@ public class VideoPlayerClient implements ClientModInitializer {
     private static void loadConfig() {
         boolean existed = Files.exists(configPath);
         boolean changed = false;
+        boolean preserveInvalidFile = false;
         try {
             config = gson.fromJson(Files.readString(configPath), Config.class);
             if (config == null) config = new Config();
         } catch (Exception e) {
             config = new Config();
             changed = true;
+            preserveInvalidFile = existed;
+            LOGGER.warn("Failed to read client configuration {}; keeping the original file", configPath, e);
         }
         config.nativeDownloadUrls = NativeDownloadConfig.load();
         if (config.startupGuideShown == null) {
             config.startupGuideShown = existed;
+            changed = true;
+        }
+        boolean currentGuideVersionShown = false;
+        try {
+            currentGuideVersionShown = Files.isRegularFile(startupGuideVersionPath)
+                    && VideoPlayerMain.version.equals(Files.readString(startupGuideVersionPath).trim());
+        } catch (IOException e) {
+            LOGGER.warn("Failed to read startup guide version file {}", startupGuideVersionPath, e);
+        }
+        if (!currentGuideVersionShown && !Boolean.FALSE.equals(config.startupGuideShown)) {
+            config.startupGuideShown = false;
             changed = true;
         }
         config.videoBackend = VideoBackends.normalize(config.videoBackend);
@@ -844,6 +958,9 @@ public class VideoPlayerClient implements ClientModInitializer {
         if (config.mpvYtdlPath == null) {
             config.mpvYtdlPath = "";
             changed = true;
+        } else if (YtDlpManager.isCurrentManagedExecutable(config.mpvYtdlPath)) {
+            config.mpvYtdlPath = "";
+            changed = true;
         }
         applyNativePlatformConfig();
         config.volume = Math.clamp(config.volume, 0, 100);
@@ -861,7 +978,12 @@ public class VideoPlayerClient implements ClientModInitializer {
             config.bilibiliQuality = bilibiliQuality;
             changed = true;
         }
-        if (changed) saveConfig();
+        int youtubeQuality = YouTubeQuality.normalizeClient(config.youtubeQuality);
+        if (config.youtubeQuality != youtubeQuality) {
+            config.youtubeQuality = youtubeQuality;
+            changed = true;
+        }
+        if (changed && !preserveInvalidFile) saveConfig();
     }
 
     private static void registerStartupGuide() {
@@ -891,12 +1013,4 @@ public class VideoPlayerClient implements ClientModInitializer {
         });
     }
 
-    private static void registerMpvFilterGraphScreenOpener() {
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (!pendingMpvFilterGraphScreen) return;
-            pendingMpvFilterGraphScreen = false;
-            if (client.currentScreen instanceof MpvFilterGraphScreen) return;
-            client.setScreen(new MpvFilterGraphScreen(client.currentScreen));
-        });
-    }
 }

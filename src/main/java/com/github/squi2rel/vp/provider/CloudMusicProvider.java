@@ -11,6 +11,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
@@ -39,8 +40,8 @@ public class CloudMusicProvider implements IVideoProvider {
 
     private SongMeta fetchMeta(String id, IProviderSource source) {
         try (HttpClient client = HttpClient.newHttpClient()) {
-            HttpResponse<String> response = client.send(request(String.format(DETAIL_URL, id)), HttpResponse.BodyHandlers.ofString());
-            JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
+            HttpResponse<InputStream> response = client.send(request(String.format(DETAIL_URL, id)), HttpResponse.BodyHandlers.ofInputStream());
+            JsonObject root = JsonParser.parseString(HttpResponseBody.read(response)).getAsJsonObject();
             if (root.get("code").getAsLong() != 200) {
                 source.reply(VpTranslation.of("message.videoplayer.cloud_music_status_error", "Cloud Music returned status code %s", root.get("code")));
                 return null;
@@ -55,8 +56,8 @@ public class CloudMusicProvider implements IVideoProvider {
 
     private VideoInfo fetchPlayableUrl(String rawPath, String id, SongMeta meta, IProviderSource source) {
         try (HttpClient client = HttpClient.newHttpClient()) {
-            HttpResponse<String> response = client.send(request(String.format(PLAY_URL, id, id)), HttpResponse.BodyHandlers.ofString());
-            JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
+            HttpResponse<InputStream> response = client.send(request(String.format(PLAY_URL, id, id)), HttpResponse.BodyHandlers.ofInputStream());
+            JsonObject root = JsonParser.parseString(HttpResponseBody.read(response)).getAsJsonObject();
             if (root.get("code").getAsLong() != 200) {
                 source.reply(VpTranslation.of("message.videoplayer.cloud_music_status_error", "Cloud Music returned status code %s", root.get("code")));
                 return null;

@@ -4,7 +4,6 @@ import com.github.squi2rel.vp.network.ServerPacketHandler;
 import com.github.squi2rel.vp.network.VideoPackets;
 import com.github.squi2rel.vp.network.VideoPayload;
 import com.github.squi2rel.vp.provider.VideoProviders;
-import com.github.squi2rel.vp.video.StreamListener;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -43,12 +42,9 @@ public class VideoPlayerMain implements ModInitializer {
     @Override
     public void onInitialize() {
         if (android) {
-            LOGGER.warn("!!! Android Device !!! Crash may happen");
-            Android.load();
+            LOGGER.info("Android device detected; native libraries will use the Android ABI package");
         }
-        if (!StreamListener.load()) {
-            LOGGER.warn("No video stream listener backend is available yet. Client setup can install VLC or MPV.");
-        }
+        System.setProperty("videoplayer.version", version);
         VideoProviders.register();
         VideoPayload.register();
         ServerLifecycleEvents.SERVER_STARTED.register(s -> {
@@ -59,13 +55,18 @@ public class VideoPlayerMain implements ModInitializer {
         ServerLifecycleEvents.BEFORE_SAVE.register((s, flush, force) -> DataHolder.save());
         ServerWorldEvents.LOAD.register(DataHolder::loadWorld);
         ServerWorldEvents.UNLOAD.register(DataHolder::unloadWorld);
-        ServerTickEvents.START_WORLD_TICK.register(s -> DataHolder.update());
+        ServerTickEvents.START_SERVER_TICK.register(ignored -> DataHolder.update());
         ServerPlayConnectionEvents.JOIN.register((e, p, s) -> DataHolder.playerJoin(e.player));
         ServerPlayConnectionEvents.DISCONNECT.register((e, s) -> DataHolder.playerLeave(e.player.getUuid()));
         ServerPlayNetworking.registerGlobalReceiver(VideoPayload.ID, (p, c) -> {
             long receivedAt = System.currentTimeMillis();
+            byte[] copy = p.data().clone();
+            if (copy.length > VideoPackets.MAX_PAYLOAD_BYTES) {
+                c.player().networkHandler.disconnect(Text.of("VideoPlayer payload is too large"));
+                return;
+            }
             c.server().execute(() -> {
-                ByteBuf buf = Unpooled.wrappedBuffer(p.data());
+                ByteBuf buf = Unpooled.wrappedBuffer(copy);
                 try {
                     ServerPacketHandler.handle(c.player(), buf, receivedAt);
                 } catch (Exception e) {

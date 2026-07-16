@@ -1,5 +1,6 @@
 package com.github.squi2rel.vp.danmaku;
 
+import com.github.squi2rel.vp.provider.MediaAddressPolicy;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -44,7 +45,9 @@ final class BiliCcSubtitleFetcher {
     private static SubtitleTrack fetchTrackBlocking(SubtitleOption option) {
         if (option == null || option.url().isBlank()) return SubtitleTrack.empty();
         try {
-            String body = BiliHttp.getString(normalizeSubtitleUri(option.url()), option.referer());
+            URI uri = normalizeSubtitleUri(option.url());
+            if (!MediaAddressPolicy.isAllowed(uri.toString())) return SubtitleTrack.empty();
+            String body = BiliHttp.getString(uri, option.referer());
             return new SubtitleTrack(option.key(), option.label(), parseCues(body));
         } catch (Exception ignored) {
             return SubtitleTrack.empty();

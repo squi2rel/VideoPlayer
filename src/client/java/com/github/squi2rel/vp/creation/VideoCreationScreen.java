@@ -42,7 +42,8 @@ public class VideoCreationScreen extends Screen {
         int row = top + 24;
 
         nameField = new TextFieldWidget(textRenderer, left + 88, row, panelWidth - 88, 20, VpTexts.tr("label.videoplayer.name", "Name"));
-        nameField.setMaxLength(VideoScreen.MAX_NAME_LENGTH);
+        nameField.setMaxLength(VideoScreen.MAX_NAME_BYTES);
+        nameField.setTextPredicate(VideoScreen::validNameInput);
         nameField.setText(draft.name);
         addDrawableChild(nameField);
 
@@ -75,7 +76,8 @@ public class VideoCreationScreen extends Screen {
 
         row += 28;
         sourceField = new TextFieldWidget(textRenderer, left + 88, row, panelWidth - 168, 20, VpTexts.tr("label.videoplayer.source", "Source"));
-        sourceField.setMaxLength(VideoScreen.MAX_NAME_LENGTH);
+        sourceField.setMaxLength(VideoScreen.MAX_NAME_BYTES);
+        sourceField.setTextPredicate(VideoScreen::validNameInput);
         sourceField.setText(draft.source);
         addDrawableChild(sourceField);
         sourceButton = addDrawableChild(ButtonWidget.builder(VpTexts.tr("button.videoplayer.select", "Select"), button -> {

@@ -13,6 +13,7 @@ public final class VideoBackends {
     }
 
     public static String normalize(String backend) {
+        if (VideoPlayerMain.android) return VLC;
         if (backend == null) return VLC;
         String normalized = backend.trim().toLowerCase(Locale.ROOT);
         return MPV.equals(normalized) ? MPV : VLC;
@@ -24,6 +25,7 @@ public final class VideoBackends {
     }
 
     public static VideoBackend create(String requestedBackend, BiConsumer<Integer, Integer> sizeListener) {
+        if (VideoPlayerMain.android) return createVlc(sizeListener);
         String backend = normalize(requestedBackend);
         if (MPV.equals(backend)) {
             if (MpvVideoBackend.isAvailable()) {

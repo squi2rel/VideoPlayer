@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.NativePackageManager;
+import com.github.squi2rel.vp.NativeDownloadConfig;
 import com.github.squi2rel.vp.VideoPlayerMain;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -107,8 +108,11 @@ final class MpvLibrary {
                     return lib;
                 } catch (Throwable t) {
                     last = t;
+                } finally {
+                    NativeLibraryLoader.clearWindowsDllDirectory();
                 }
             }
+            NativeLibraryLoader.clearWindowsDllDirectory();
             for (String name : LIBRARY_CANDIDATES) {
                 try {
                     lib = loadByName(name);
@@ -125,7 +129,7 @@ final class MpvLibrary {
 
     static void resetLoadState() {
         synchronized (MpvLibrary.class) {
-            lib = null;
+            if (lib != null) return;
             loadError = null;
         }
     }
@@ -133,13 +137,17 @@ final class MpvLibrary {
     private static void prepareLocaleForMpv() {
         if (Platform.isWindows()) return;
         try {
-            CLibrary.INSTANCE.setlocale(CLibrary.LC_NUMERIC, "C");
+            CLibrary.INSTANCE.setlocale(lcNumericCategory(), "C");
         } catch (Throwable t) {
             if (!localeWarningLogged) {
                 localeWarningLogged = true;
                 VideoPlayerMain.LOGGER.warn("Failed to set LC_NUMERIC=C before loading libmpv", t);
             }
         }
+    }
+
+    private static int lcNumericCategory() {
+        return "macos".equals(NativeDownloadConfig.osKey()) ? 4 : 1;
     }
 
     private static IllegalStateException unavailable(Throwable cause) {
@@ -269,7 +277,6 @@ final class MpvLibrary {
     }
 
     private interface CLibrary extends Library {
-        int LC_NUMERIC = 1;
         CLibrary INSTANCE = Native.load(Platform.C_LIBRARY_NAME, CLibrary.class);
 
         String setlocale(int category, String locale);

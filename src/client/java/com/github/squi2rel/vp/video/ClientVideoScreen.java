@@ -16,6 +16,7 @@ import net.minecraft.util.Formatting;
 import org.joml.Vector3f;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 public class ClientVideoScreen extends VideoScreen {
     public IVideoPlayer player = null;
@@ -31,10 +32,13 @@ public class ClientVideoScreen extends VideoScreen {
     private int appliedDefaultVolume = 100;
     private volatile boolean loaded;
     private volatile int playbackToken;
+    private volatile long serverPlaybackGeneration;
+    private volatile CompletableFuture<VideoInfo> pendingPlaybackFuture;
     private final ClientDanmakuController danmaku = new ClientDanmakuController(this);
     private final ClientSubtitleController subtitles = new ClientSubtitleController(this);
 
     private long lastAutoSync;
+    private boolean autoSyncInFlight;
     private int syncFrames;
 
     private double srtt = -1;
@@ -129,6 +133,7 @@ public class ClientVideoScreen extends VideoScreen {
     public void cleanup() {
         loaded = false;
         cancelPendingPlayback();
+        serverPlaybackGeneration = 0L;
         IVideoPlayer old = player;
         player = null;
         if (old != null) old.cleanup();
@@ -170,11 +175,13 @@ public class ClientVideoScreen extends VideoScreen {
         danmaku.update();
         subtitles.update();
 
-        if (player instanceof RateAdjustablePlayer ratePlayer && !ratePlayer.isPaused()) {
+        VideoInfo syncInfo = currentPlaybackInfo();
+        if (syncInfo != null && syncInfo.seekable() && player instanceof RateAdjustablePlayer ratePlayer && !ratePlayer.isPaused()) {
             long syncTime = 150L * Math.max(syncFrames, 1);
-            if (metadata.getBool("autoSync", false) && System.currentTimeMillis() - lastAutoSync >= syncTime) {
+            if (!autoSyncInFlight && metadata.getBool("autoSync", false) && System.currentTimeMillis() - lastAutoSync >= syncTime) {
                 lastAutoSync = System.currentTimeMillis();
-                ClientPacketHandler.autoSync(this, System.currentTimeMillis());
+                autoSyncInFlight = true;
+                ClientPacketHandler.autoSync(this, System.currentTimeMillis(), result -> autoSyncInFlight = false);
             }
         }
     }
@@ -206,8 +213,9 @@ public class ClientVideoScreen extends VideoScreen {
         if (source.isEmpty()) {
             applyCachedOrDefaultVolume();
             IVideoPlayer old = player;
-            player = VideoPlayers.from(info, this, player);
-            if (player == null) return;
+            IVideoPlayer replacement = VideoPlayers.from(info, this, old);
+            if (replacement == null) return;
+            player = replacement;
             playingInfo = info;
             idlePlaying = idle;
             idleInfo = idle ? info : null;
@@ -216,7 +224,7 @@ public class ClientVideoScreen extends VideoScreen {
                 player.init();
             }
             if (player instanceof MetaListener m) m.onMetaChanged();
-            if (toSeek > 0) {
+            if (toSeek >= 0) {
                 startTime = System.currentTimeMillis() - toSeek;
                 player.setTargetTime(toSeek);
                 toSeek = -1;
@@ -238,7 +246,44 @@ public class ClientVideoScreen extends VideoScreen {
     }
 
     public int beginPlaybackRequest() {
+        cancelPlaybackFuture();
+        toSeek = -1;
         return ++playbackToken;
+    }
+
+    public int beginServerPlaybackRequest(long generation) {
+        if (serverPlaybackGeneration != 0L && generation <= serverPlaybackGeneration) return -1;
+        serverPlaybackGeneration = generation;
+        return beginPlaybackRequest();
+    }
+
+    public long serverPlaybackGeneration() {
+        return serverPlaybackGeneration;
+    }
+
+    public boolean acceptServerPlaybackGeneration(long generation) {
+        if (generation < serverPlaybackGeneration) return false;
+        serverPlaybackGeneration = generation;
+        return true;
+    }
+
+    public void trackPlaybackFuture(int token, CompletableFuture<VideoInfo> future) {
+        if (future == null) return;
+        if (token != playbackToken) {
+            future.cancel(true);
+            return;
+        }
+        pendingPlaybackFuture = future;
+        future.whenComplete((result, error) -> {
+            if (pendingPlaybackFuture == future) pendingPlaybackFuture = null;
+        });
+    }
+
+    public void failPlaybackRequest(int token) {
+        if (token != playbackToken) return;
+        toSeek = -1;
+        toPlay = null;
+        toPlayIdle = false;
     }
 
     public boolean canAcceptPlayback(int token) {
@@ -283,9 +328,12 @@ public class ClientVideoScreen extends VideoScreen {
     }
 
     private void cancelPendingPlayback() {
+        cancelPlaybackFuture();
         playbackToken++;
         toPlay = null;
         toPlayIdle = false;
+        toSeek = -1;
+        autoSyncInFlight = false;
         playingInfo = null;
         danmaku.stop();
         subtitles.stop();
@@ -297,11 +345,22 @@ public class ClientVideoScreen extends VideoScreen {
         idleInfo = null;
     }
 
+    private void cancelPlaybackFuture() {
+        CompletableFuture<VideoInfo> future = pendingPlaybackFuture;
+        pendingPlaybackFuture = null;
+        if (future != null) future.cancel(true);
+    }
+
     public void setProgress(long progress) {
         syncFrames = 0;
-        player.setProgress(progress);
         startTime = System.currentTimeMillis() - progress;
         danmaku.seek(progress);
+        if (player == null) {
+            toSeek = progress;
+            return;
+        }
+        toSeek = -1;
+        player.setProgress(progress);
     }
 
     public void autoSync(long roundTrip, long syncProgress) {
@@ -372,6 +431,7 @@ public class ClientVideoScreen extends VideoScreen {
     public void unload() {
         loaded = false;
         cancelPendingPlayback();
+        serverPlaybackGeneration = 0L;
         VideoPlayerClient.screens.remove(this);
         IVideoPlayer old = player;
         player = null;

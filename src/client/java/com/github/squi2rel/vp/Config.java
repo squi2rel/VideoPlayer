@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp;
 
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
+import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
 
 public class Config {
     public int volume = 100;
@@ -24,4 +25,5 @@ public class Config {
     public int danmakuScalePercent = 100;
     public boolean danmakuBottomGuard = false;
     public int bilibiliQuality = BiliQuality.DEFAULT_QN;
+    public int youtubeQuality = YouTubeQuality.AUTO;
 }

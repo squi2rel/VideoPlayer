@@ -1,14 +1,25 @@
 package com.github.squi2rel.vp;
 
-public final class Android {
+import java.nio.file.Files;
+import java.nio.file.Path;
 
-    public static void load() {
+public final class Android {
+    private static boolean loaded;
+
+    public static synchronized void load(Path libraryRoot) {
+        if (loaded) return;
+        Path bridge = libraryRoot.resolve(System.mapLibraryName("vlc_jvm_bridge"));
         try {
-            System.loadLibrary("vlc_jvm_bridge");
+            if (Files.isRegularFile(bridge)) {
+                System.load(bridge.toAbsolutePath().toString());
+            } else {
+                System.loadLibrary("vlc_jvm_bridge");
+            }
+            init();
+            loaded = true;
         } catch (UnsatisfiedLinkError e) {
-            throw new RuntimeException("Cannot load Android Library! See https://github.com/squi2rel/VideoPlayer-Library for more info", e);
+            throw new RuntimeException("Cannot initialize the Android VLC JVM bridge from " + bridge, e);
         }
-        init();
     }
 
     private static native void init();

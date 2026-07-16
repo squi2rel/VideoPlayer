@@ -7,7 +7,7 @@ import org.joml.Vector3f;
 import java.util.ArrayList;
 import java.util.Objects;
 
-import static com.github.squi2rel.vp.video.VideoScreen.MAX_NAME_LENGTH;
+import static com.github.squi2rel.vp.video.VideoScreen.MAX_NAME_BYTES;
 
 public class ClientVideoArea extends VideoArea {
     public ArrayList<Runnable> clones = new ArrayList<>();
@@ -76,6 +76,6 @@ public class ClientVideoArea extends VideoArea {
     }
 
     public static ClientVideoArea read(ByteBuf buf) {
-        return new ClientVideoArea(ByteBufUtils.readVec3(buf), ByteBufUtils.readVec3(buf), ByteBufUtils.readString(buf, MAX_NAME_LENGTH), ByteBufUtils.readString(buf, 256));
+        return new ClientVideoArea(ByteBufUtils.readVec3(buf), ByteBufUtils.readVec3(buf), ByteBufUtils.readString(buf, MAX_NAME_BYTES), ByteBufUtils.readString(buf, 256));
     }
 }

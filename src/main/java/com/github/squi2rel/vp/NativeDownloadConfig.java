@@ -54,8 +54,10 @@ public class NativeDownloadConfig {
             ANDROID_X86_64
     };
     private static volatile Map<String, Map<String, List<DownloadSource>>> defaults;
+    private static volatile Map<String, ToolDownload> defaultTools;
 
     public Map<String, Map<String, List<DownloadSource>>> urls = new LinkedHashMap<>();
+    public Map<String, ToolDownload> tools = new LinkedHashMap<>();
 
     public NativeDownloadConfig() {
         ensureDefaults();
@@ -114,6 +116,14 @@ public class NativeDownloadConfig {
             urls = new LinkedHashMap<>();
             changed = true;
         }
+        for (Map.Entry<String, Map<String, List<DownloadSource>>> entry : urls.entrySet()) {
+            Map<String, List<DownloadSource>> platforms = entry.getValue();
+            if (platforms != null && platforms.keySet().removeIf(platform ->
+                    platform != null && platform.startsWith("android_")
+                            && !isSupportedBackendPlatform(entry.getKey(), platform))) {
+                changed = true;
+            }
+        }
         Map<String, Map<String, List<DownloadSource>>> defaultUrls = defaultUrls();
         for (String backend : BACKENDS) {
             Map<String, List<DownloadSource>> backendUrls = urls.get(backend);
@@ -123,6 +133,7 @@ public class NativeDownloadConfig {
                 changed = true;
             }
             for (String platform : PLATFORMS) {
+                if (!isSupportedBackendPlatform(backend, platform)) continue;
                 List<DownloadSource> sources = backendUrls.get(platform);
                 if (sources == null) {
                     sources = new ArrayList<>();
@@ -134,12 +145,41 @@ public class NativeDownloadConfig {
                 }
             }
         }
+        if (tools == null) {
+            tools = new LinkedHashMap<>();
+            changed = true;
+        }
+        for (Map.Entry<String, ToolDownload> entry : defaultTools().entrySet()) {
+            ToolDownload configured = tools.get(entry.getKey());
+            if (configured == null) {
+                tools.put(entry.getKey(), entry.getValue().copy());
+                changed = true;
+                continue;
+            }
+            if (configured.version == null || configured.version.isBlank()) {
+                configured.version = entry.getValue().version;
+                changed = true;
+            }
+            if (configured.platforms == null) {
+                configured.platforms = new LinkedHashMap<>();
+                changed = true;
+            }
+            for (Map.Entry<String, List<DownloadSource>> platform : entry.getValue().platforms.entrySet()) {
+                List<DownloadSource> sources = configured.platforms.get(platform.getKey());
+                if (sources == null || sources.isEmpty()) {
+                    configured.platforms.put(platform.getKey(), copySources(platform.getValue()));
+                    changed = true;
+                }
+            }
+        }
         return changed;
     }
 
     public List<DownloadSource> sources(String backend, String platform) {
         ensureDefaults();
-        Map<String, List<DownloadSource>> backendUrls = urls.get(normalizeBackend(backend));
+        String normalizedBackend = normalizeBackend(backend);
+        if (!isSupportedBackendPlatform(normalizedBackend, platform)) return List.of();
+        Map<String, List<DownloadSource>> backendUrls = urls.get(normalizedBackend);
         if (backendUrls == null) return List.of();
         List<DownloadSource> sources = backendUrls.get(platform);
         if (sources == null) return List.of();
@@ -148,11 +188,18 @@ public class NativeDownloadConfig {
                 .toList();
     }
 
+    public ToolDownload tool(String name) {
+        ensureDefaults();
+        ToolDownload tool = tools.get(name == null ? "" : name.trim().toLowerCase(Locale.ROOT));
+        return tool == null ? new ToolDownload() : tool;
+    }
+
     public List<String> platformsForCurrentOs() {
         return platformsForOs(osKey());
     }
 
     public static List<String> platformsForOs(String os) {
+        if ("android".equals(os)) return List.of(ANDROID_ARM64);
         String prefix = (os == null ? "" : os) + "_";
         return Arrays.stream(PLATFORMS)
                 .filter(platform -> platform.startsWith(prefix))
@@ -165,6 +212,12 @@ public class NativeDownloadConfig {
             if (known.equals(platform)) return true;
         }
         return false;
+    }
+
+    public static boolean isSupportedBackendPlatform(String backend, String platform) {
+        if (!isKnownPlatform(platform)) return false;
+        if (!"android".equals(osFromPlatform(platform))) return true;
+        return BACKEND_VLC.equals(normalizeBackend(backend)) && ANDROID_ARM64.equals(platform);
     }
 
     public static String normalizePlatformForCurrentOs(String platform) {
@@ -238,7 +291,7 @@ public class NativeDownloadConfig {
         if (sources == null || sources.isEmpty()) return false;
         for (DownloadSource source : sources) {
             if (source == null || source.url == null || source.url.isBlank()) continue;
-            target.add(new DownloadSource(source.url, source.sha256));
+            target.add(new DownloadSource(source.name, source.url, source.sha256));
         }
         return !target.isEmpty();
     }
@@ -267,11 +320,70 @@ public class NativeDownloadConfig {
         }
     }
 
+    private static Map<String, ToolDownload> defaultTools() {
+        Map<String, ToolDownload> loaded = defaultTools;
+        if (loaded != null) return loaded;
+        synchronized (NativeDownloadConfig.class) {
+            if (defaultTools == null) {
+                defaultTools = Collections.unmodifiableMap(loadDefaultFile().tools);
+            }
+            return defaultTools;
+        }
+    }
+
+    private static DefaultDownloadFile loadDefaultFile() {
+        try (InputStream stream = NativeDownloadConfig.class.getResourceAsStream(DEFAULTS_RESOURCE)) {
+            if (stream == null) return new DefaultDownloadFile();
+            try (InputStreamReader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+                DefaultDownloadFile file = GSON.fromJson(reader, DefaultDownloadFile.class);
+                return file == null ? new DefaultDownloadFile() : file;
+            }
+        } catch (RuntimeException | java.io.IOException ignored) {
+            return new DefaultDownloadFile();
+        }
+    }
+
+    private static List<DownloadSource> copySources(List<DownloadSource> sources) {
+        if (sources == null || sources.isEmpty()) return new ArrayList<>();
+        ArrayList<DownloadSource> copy = new ArrayList<>();
+        for (DownloadSource source : sources) {
+            if (source != null) copy.add(new DownloadSource(source.name, source.url, source.sha256));
+        }
+        return copy;
+    }
+
     private static class DefaultDownloadFile {
         Map<String, Map<String, List<DownloadSource>>> urls = new LinkedHashMap<>();
+        Map<String, ToolDownload> tools = new LinkedHashMap<>();
+    }
+
+    public static class ToolDownload {
+        public String version = "";
+        public Map<String, List<DownloadSource>> platforms = new LinkedHashMap<>();
+
+        public List<DownloadSource> sources(String platform) {
+            if (platforms == null || platform == null) return List.of();
+            List<DownloadSource> sources = platforms.get(platform);
+            if (sources == null) return List.of();
+            return sources.stream()
+                    .filter(source -> source != null && source.url != null && !source.url.isBlank())
+                    .toList();
+        }
+
+        private ToolDownload copy() {
+            ToolDownload copy = new ToolDownload();
+            copy.version = version == null ? "" : version;
+            if (platforms != null) {
+                for (Map.Entry<String, List<DownloadSource>> entry : platforms.entrySet()) {
+                    copy.platforms.put(entry.getKey(), copySources(entry.getValue()));
+                }
+            }
+            return copy;
+        }
     }
 
     public static class DownloadSource {
+        public String name = "";
         public String url = "";
         public String sha256 = "";
 
@@ -279,6 +391,11 @@ public class NativeDownloadConfig {
         }
 
         public DownloadSource(String url, String sha256) {
+            this("", url, sha256);
+        }
+
+        public DownloadSource(String name, String url, String sha256) {
+            this.name = name == null ? "" : name;
             this.url = url == null ? "" : url;
             this.sha256 = sha256 == null ? "" : sha256;
         }

@@ -2,8 +2,8 @@ package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.VideoPlayerMain;
 import com.github.squi2rel.vp.VideoPlayerClient;
-import com.github.squi2rel.vp.filtergraph.MpvFilterGraphManager;
 import com.github.squi2rel.vp.filtergraph.MpvLavfiFilterCatalog;
+import com.github.squi2rel.vp.provider.MediaAddressPolicy;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
@@ -11,6 +11,7 @@ import com.sun.jna.Pointer;
 import com.sun.jna.ptr.PointerByReference;
 import net.minecraft.client.MinecraftClient;
 import org.lwjgl.BufferUtils;
+import org.lwjgl.PointerBuffer;
 import org.lwjgl.opengl.GL;
 
 import java.nio.ByteBuffer;
@@ -20,7 +21,6 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 
@@ -36,6 +36,7 @@ import static org.lwjgl.opengl.GL21.*;
 import static org.lwjgl.opengl.GL30.*;
 import static org.lwjgl.opengl.GL32.*;
 import static org.lwjgl.system.MemoryUtil.NULL;
+import static org.lwjgl.system.MemoryUtil.memUTF8;
 
 public class MpvVideoBackend implements VideoBackend {
     private static final int INITIAL_SIZE = 1;
@@ -43,6 +44,7 @@ public class MpvVideoBackend implements VideoBackend {
     private static final int SHARED_TEXTURE_COUNT = 3;
     private static final int SINGLE_CONTEXT_TEXTURE_INDEX = 0;
     private static final Set<MpvVideoBackend> ACTIVE_BACKENDS = ConcurrentHashMap.newKeySet();
+    private static volatile boolean libraryLoaded;
 
     private final LibMpv lib;
     private final boolean singleContext = VideoPlayerMain.android;
@@ -77,6 +79,7 @@ public class MpvVideoBackend implements VideoBackend {
 
     private volatile boolean loaded;
     private volatile boolean paused = true;
+    private volatile boolean desiredPaused;
     private volatile boolean seekable = true;
     private volatile boolean renderFailed;
     private volatile long targetTime = -1;
@@ -90,18 +93,26 @@ public class MpvVideoBackend implements VideoBackend {
 
     public MpvVideoBackend(BiConsumer<Integer, Integer> sizeListener) {
         this.lib = MpvLibrary.get();
+        libraryLoaded = true;
         this.sizeListener = sizeListener;
     }
 
     public static boolean isAvailable() {
-        return MpvLibrary.isAvailable();
+        boolean available = MpvLibrary.isAvailable();
+        if (available) libraryLoaded = true;
+        return available;
     }
 
     public static Throwable loadError() {
         return MpvLibrary.loadError();
     }
 
-    public static void resetAvailability() {
+    public static boolean isLoaded() {
+        return libraryLoaded;
+    }
+
+    public static synchronized void resetAvailability() {
+        if (libraryLoaded || !ACTIVE_BACKENDS.isEmpty()) return;
         MpvLibrary.resetLoadState();
         MpvLavfiFilterCatalog.reset();
     }
@@ -151,6 +162,7 @@ public class MpvVideoBackend implements VideoBackend {
     public void play(VideoInfo info, long targetTime, int volume) {
         renderFailed = false;
         loaded = false;
+        desiredPaused = false;
         synchronized (this) {
             pendingInfo = info;
             pendingTargetTime = targetTime;
@@ -162,21 +174,28 @@ public class MpvVideoBackend implements VideoBackend {
 
     private void startPlayback(Pointer ctx, VideoInfo info, long targetTime, int volume) {
         if (released.get()) return;
+        if (info == null || (!info.path().isBlank() && !MediaAddressPolicy.isAllowed(info.path())
+                || VideoParams.hasDisallowedMediaUrls(info.params()))) {
+            renderFailed = true;
+            loaded = false;
+            VideoPlayerMain.LOGGER.warn("Rejected unsupported media address");
+            return;
+        }
         this.targetTime = targetTime;
         this.volume = volume;
         loaded = false;
-        paused = false;
-        progressClock.reset(false);
+        paused = desiredPaused;
+        progressClock.reset(desiredPaused);
         pendingWidth = INITIAL_SIZE;
         pendingHeight = INITIAL_SIZE;
         MediaInputs inputs = mediaInputs(info);
         currentVideoInputAvailable = inputs.video();
         currentAudioInputAvailable = inputs.audio();
-        String path = info.path().replace("rtspt://", "rtsp://");
-        String graph = MpvFilterGraphManager.currentLavfiComplexForPlayback(inputs.video(), inputs.audio());
-        String loadOptions = VideoParams.mpvLoadOptions(info.params(), configuredProxy(), configuredYtdlPath(), graph);
+        String path = VideoParams.normalizeStreamPath(info.path());
+        String graph = "";
+        String loadOptions = VideoParams.mpvLoadOptionsForPath(info.path(), info.params(), configuredProxy(), configuredYtdlPath(), graph);
         setDouble(ctx, "volume", volume);
-        setFlag(ctx, "pause", false);
+        setFlag(ctx, "pause", desiredPaused);
         loadFile(ctx, path, loadOptions);
         if (released.get()) {
             stopNativePlayback(ctx);
@@ -283,6 +302,7 @@ public class MpvVideoBackend implements VideoBackend {
 
     @Override
     public void pause(boolean pause) {
+        desiredPaused = pause;
         paused = pause;
         progressClock.setPaused(pause);
         submit(ctx -> setFlag(ctx, "pause", pause));
@@ -339,51 +359,18 @@ public class MpvVideoBackend implements VideoBackend {
     @Override
     public void cleanup() {
         ACTIVE_BACKENDS.remove(this);
+        if (!released.compareAndSet(false, true)) return;
+        discardPendingPlayback();
+        tasks.clear();
         if (singleContext) {
             renderThreadStopped.set(false);
-            if (!released.compareAndSet(false, true)) {
-                renderThreadStopped.set(true);
-                return;
-            }
-            discardPendingPlayback();
-            stopNativePlayback(handle);
             cleanupSingleContextRenderer();
-            renderThreadStopped.set(true);
-            Pointer ctx = handle;
-            if (ctx != null) lib.mpv_wakeup(ctx);
-            if (eventThread != null && eventThread != Thread.currentThread()) {
-                try {
-                    eventThread.join(1000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
             return;
         }
 
-        if (!released.compareAndSet(false, true)) return;
-
-        discardPendingPlayback();
-        stopNativePlayback(handle);
         signalRenderThread();
-
-        if (renderThread != null && renderThread != Thread.currentThread()) {
-            try {
-                renderThread.join(2000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-
         Pointer ctx = handle;
         if (ctx != null) lib.mpv_wakeup(ctx);
-        if (eventThread != null && eventThread != Thread.currentThread()) {
-            try {
-                eventThread.join(1000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
     }
 
     private void discardPendingPlayback() {
@@ -399,29 +386,22 @@ public class MpvVideoBackend implements VideoBackend {
 
     private void cleanupSingleContextRenderer() {
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client.isOnThread()) {
+        Runnable cleanup = () -> {
             try {
                 runSingleContextCleanup();
             } catch (Throwable t) {
                 VideoPlayerMain.LOGGER.warn("Failed to clean up MPV single-context renderer", t);
+            } finally {
+                renderThreadStopped.set(true);
+                Pointer ctx = handle;
+                if (ctx != null) lib.mpv_wakeup(ctx);
             }
+        };
+        if (client.isOnThread()) {
+            cleanup.run();
             return;
         }
-
-        CompletableFuture<Void> cleaned = new CompletableFuture<>();
-        client.execute(() -> {
-            try {
-                runSingleContextCleanup();
-                cleaned.complete(null);
-            } catch (Throwable t) {
-                cleaned.completeExceptionally(t);
-            }
-        });
-        try {
-            cleaned.get(2, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            VideoPlayerMain.LOGGER.warn("Failed or timed out while cleaning up MPV single-context renderer", e);
-        }
+        client.execute(cleanup);
     }
 
     private void runSingleContextCleanup() {
@@ -503,6 +483,8 @@ public class MpvVideoBackend implements VideoBackend {
                 }
                 loaded = true;
                 refreshProperties(ctx);
+                setFlag(ctx, "pause", desiredPaused);
+                paused = desiredPaused;
                 if (targetTime > 0) {
                     progressClock.seekTo(targetTime);
                     seek(ctx, targetTime);
@@ -539,7 +521,10 @@ public class MpvVideoBackend implements VideoBackend {
         if (dwidth != null && dheight != null && dwidth > 0 && dheight > 0) {
             int nextWidth = Math.max(1, dwidth.intValue());
             int nextHeight = Math.max(1, dheight.intValue());
-            if (nextWidth != pendingWidth || nextHeight != pendingHeight) {
+            if (!VideoFrameLimits.valid(nextWidth, nextHeight)) {
+                renderFailed = true;
+                VideoPlayerMain.LOGGER.warn("Rejected MPV video frame dimensions {}x{}", nextWidth, nextHeight);
+            } else if (nextWidth != pendingWidth || nextHeight != pendingHeight) {
                 pendingWidth = nextWidth;
                 pendingHeight = nextHeight;
                 signalRenderThread();
@@ -577,8 +562,7 @@ public class MpvVideoBackend implements VideoBackend {
     }
 
     private String lavfiComplexForCurrentMedia(String graph) {
-        if (currentVideoInputAvailable && currentAudioInputAvailable) return graph == null ? "" : graph;
-        return MpvFilterGraphManager.currentLavfiComplexForPlayback(currentVideoInputAvailable, currentAudioInputAvailable);
+        return graph == null ? "" : graph;
     }
 
     private void resetCurrentMediaInputs() {
@@ -604,17 +588,27 @@ public class MpvVideoBackend implements VideoBackend {
 
     private long createSharedWindow() {
         long share = MinecraftClient.getInstance().getWindow().getHandle();
+        glfwDefaultWindowHints();
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_CLIENT_API, glfwGetWindowAttrib(share, GLFW_CLIENT_API));
+        glfwWindowHint(GLFW_CONTEXT_CREATION_API, glfwGetWindowAttrib(share, GLFW_CONTEXT_CREATION_API));
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, glfwGetWindowAttrib(share, GLFW_CONTEXT_VERSION_MAJOR));
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, glfwGetWindowAttrib(share, GLFW_CONTEXT_VERSION_MINOR));
+        glfwWindowHint(GLFW_CONTEXT_ROBUSTNESS, glfwGetWindowAttrib(share, GLFW_CONTEXT_ROBUSTNESS));
+        glfwWindowHint(GLFW_CONTEXT_RELEASE_BEHAVIOR, glfwGetWindowAttrib(share, GLFW_CONTEXT_RELEASE_BEHAVIOR));
         glfwWindowHint(GLFW_OPENGL_PROFILE, glfwGetWindowAttrib(share, GLFW_OPENGL_PROFILE));
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, glfwGetWindowAttrib(share, GLFW_OPENGL_FORWARD_COMPAT));
         glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, glfwGetWindowAttrib(share, GLFW_OPENGL_DEBUG_CONTEXT));
+        glfwWindowHint(GLFW_CONTEXT_NO_ERROR, glfwGetWindowAttrib(share, GLFW_CONTEXT_NO_ERROR));
 
         long window = glfwCreateWindow(1, 1, "VideoPlayer MPV", NULL, share);
         glfwDefaultWindowHints();
         if (window == NULL) {
-            throw new IllegalStateException("Failed to create shared MPV OpenGL context");
+            PointerBuffer description = BufferUtils.createPointerBuffer(1);
+            int error = glfwGetError(description);
+            long descriptionAddress = description.get(0);
+            String detail = descriptionAddress == NULL ? "unknown GLFW error" : memUTF8(descriptionAddress);
+            throw new IllegalStateException("Failed to create shared MPV OpenGL context (GLFW " + error + ": " + detail + ")");
         }
         return window;
     }
@@ -764,6 +758,12 @@ public class MpvVideoBackend implements VideoBackend {
     private void applyPendingSize() {
         int targetWidth = Math.max(1, pendingWidth);
         int targetHeight = Math.max(1, pendingHeight);
+        if (!VideoFrameLimits.valid(targetWidth, targetHeight)) {
+            renderFailed = true;
+            pendingWidth = INITIAL_SIZE;
+            pendingHeight = INITIAL_SIZE;
+            return;
+        }
         if (targetWidth == width && targetHeight == height) return;
         resizeTexture(targetWidth, targetHeight);
         notifySize(width, height);

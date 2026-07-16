@@ -1,12 +1,15 @@
 package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.VideoPlayerMain;
+import com.github.squi2rel.vp.provider.MediaAddressPolicy;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.sun.jna.Pointer;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 final class VlcStreamListener implements IVideoListener {
@@ -23,6 +26,7 @@ final class VlcStreamListener implements IVideoListener {
     private static Pointer instance;
     private static Throwable loadError;
     private static boolean loadAttempted;
+    private static final Set<VlcStreamListener> ACTIVE = ConcurrentHashMap.newKeySet();
 
     private final VideoInfo info;
     private final VlcLibrary.LibVlc lib;
@@ -92,15 +96,36 @@ final class VlcStreamListener implements IVideoListener {
     }
 
     static synchronized void resetLoadState() {
-        Pointer oldInstance = instance;
+        if (instance != null) return;
+        loadError = null;
+        loadAttempted = false;
+        VlcLibrary.resetLoadState();
+    }
+
+    static synchronized void shutdown() {
+        List<VlcStreamListener> listeners = List.copyOf(ACTIVE);
+        for (VlcStreamListener listener : listeners) {
+            listener.cancel();
+        }
+        for (VlcStreamListener listener : listeners) {
+            Thread running = listener.thread;
+            if (running == null || running == Thread.currentThread()) continue;
+            try {
+                running.join(2_000L);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        Pointer loadedInstance = instance;
         instance = null;
         loadError = null;
         loadAttempted = false;
-        if (oldInstance != null) {
+        if (loadedInstance != null) {
             try {
-                VlcLibrary.releaseInstance(oldInstance);
-            } catch (RuntimeException e) {
-                VideoPlayerMain.LOGGER.warn("Failed to release VLC stream listener instance", e);
+                VlcLibrary.releaseInstance(loadedInstance);
+            } catch (Throwable error) {
+                VideoPlayerMain.LOGGER.warn("Failed to release global VLC stream listener instance", error);
             }
         }
         VlcLibrary.resetLoadState();
@@ -163,6 +188,7 @@ final class VlcStreamListener implements IVideoListener {
         started.set(false);
         lastPlayTime = 0;
         lastPlayUpdateTime = System.currentTimeMillis();
+        ACTIVE.add(this);
         thread = new Thread(this::run, "VideoPlayer-VLC-stream");
         thread.setDaemon(true);
         thread.start();
@@ -203,7 +229,13 @@ final class VlcStreamListener implements IVideoListener {
                 eventManager = manager;
             }
 
-            media = VlcLibrary.createMedia(currentInstance, info.path(), VideoParams.vlcOptions(info.params()));
+            if (info == null || info.path().isBlank() || !MediaAddressPolicy.isAllowed(info.path())
+                    || VideoParams.hasDisallowedMediaUrls(info.params())) {
+                throw new IllegalArgumentException("Media address is not allowed");
+            }
+
+            media = VlcLibrary.createMedia(currentInstance, VideoParams.normalizeStreamPath(info.path()),
+                    VideoParams.vlcOptions(info.path(), info.params(), StreamListener.configuredProxy()));
             lib.libvlc_media_player_set_media(player, media);
             lib.libvlc_media_release(media);
             media = null;
@@ -239,6 +271,7 @@ final class VlcStreamListener implements IVideoListener {
                 }
             }
             releasePlayer(player, manager);
+            ACTIVE.remove(this);
         }
     }
 

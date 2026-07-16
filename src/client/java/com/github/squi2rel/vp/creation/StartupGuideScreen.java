@@ -3,11 +3,12 @@ package com.github.squi2rel.vp.creation;
 import com.github.squi2rel.vp.NativeDownloadConfig;
 import com.github.squi2rel.vp.NativePackageManager;
 import com.github.squi2rel.vp.VideoPlayerClient;
+import com.github.squi2rel.vp.VideoPlayerMain;
+import com.github.squi2rel.vp.YtDlpManager;
 import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.i18n.VpTranslation;
 import com.github.squi2rel.vp.i18n.VpTranslations;
 import com.github.squi2rel.vp.video.MpvVideoBackend;
-import com.github.squi2rel.vp.video.StreamListener;
 import com.github.squi2rel.vp.video.VideoBackends;
 import com.github.squi2rel.vp.video.VlcDecoder;
 import net.minecraft.client.MinecraftClient;
@@ -22,18 +23,34 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class StartupGuideScreen extends Screen {
+    private enum BackendRefreshResult {
+        AVAILABLE,
+        RETRY_SUCCEEDED,
+        RETRY_FAILED,
+        RESTART_REQUIRED
+    }
+
+    private record InstallationState(String vlcPlatform, boolean vlcInstalled, String mpvPlatform, boolean mpvInstalled) {
+    }
+
+    private record AvailabilityState(boolean vlcAvailable, boolean mpvAvailable) {
+    }
+
     private static final VpUiTheme THEME = VpUiTheme.classic();
     private static final int PANEL_WIDTH = 460;
     private static final int PANEL_HEIGHT = 286;
     private static final int MIN_PANEL_HEIGHT = 168;
     private static final int CONTROL_HEIGHT = 18;
     private static final int ROW_HEIGHT = 52;
-    private static final int BACKEND_START_Y = 62;
+    private static final int YTDLP_START_Y = 62;
+    private static final int BACKEND_START_Y = YTDLP_START_Y + ROW_HEIGHT;
     private static final int BACKEND_BUTTON_COUNT = 4;
     private static final int GAP = 8;
     private static final int SCROLL_STEP = 24;
+    private static final Map<String, CompletableFuture<NativePackageManager.DownloadResult>> NATIVE_DOWNLOAD_TASKS = new ConcurrentHashMap<>();
 
     private final Screen parent;
     private final Map<String, Integer> browserIndex = new HashMap<>();
@@ -46,20 +63,32 @@ public class StartupGuideScreen extends Screen {
     private VpButtonWidget mpvCopyLink;
     private VpButtonWidget mpvPlatform;
     private VpButtonWidget mpvSelect;
+    private VpButtonWidget ytdlpDownload;
+    private VpButtonWidget ytdlpCopyLink;
+    private VpButtonWidget ytdlpPlatform;
     private VpButtonWidget done;
     private VpButtonWidget skip;
     private VpTextFieldWidget proxyField;
     private VpTextFieldWidget ytdlPathField;
 
     private CompletableFuture<NativePackageManager.DownloadResult> downloadTask;
+    private CompletableFuture<YtDlpManager.Detection> ytdlpDetectionTask;
+    private CompletableFuture<InstallationState> installationStateTask;
+    private CompletableFuture<AvailabilityState> availabilityTask;
     private String activeBackend = "";
     private VpTranslation status = VpTranslation.EMPTY;
     private int sourceIndex;
     private int sourceCount;
+    private String sourceName = "";
     private long bytesRead;
     private long totalBytes;
     private boolean vlcAvailable;
     private boolean mpvAvailable;
+    private boolean vlcInstalled;
+    private boolean mpvInstalled;
+    private boolean ytdlpAvailable;
+    private String ytdlpVersion = "";
+    private String selectedYtdlpPlatform = NativeDownloadConfig.platformKey();
     private String selectedVlcPlatform = NativeDownloadConfig.platformKey();
     private String selectedMpvPlatform = NativeDownloadConfig.platformKey();
     private int contentScroll;
@@ -92,17 +121,22 @@ public class StartupGuideScreen extends Screen {
         proxyField.setText(currentProxy());
         ytdlPathField = new VpTextFieldWidget(textRenderer, inputRow.ytdlFieldX(), contentTop + 4, inputRow.ytdlFieldWidth(), CONTROL_HEIGHT,
                 VpTexts.tr("label.videoplayer.ytdl_path", "yt-dlp"), THEME);
-        ytdlPathField.setMaxLength(260);
+        ytdlPathField.setMaxLength(4096);
         ytdlPathField.setText(currentYtdlPath());
 
+        ytdlpPlatform = button("", buttonX, contentTop + YTDLP_START_Y, buttonW, () -> {});
+        ytdlpDownload = button(VpTexts.tr("button.videoplayer.download", "Download"), buttonX + (buttonW + GAP) * 2,
+                contentTop + YTDLP_START_Y, buttonW, this::startYtdlpDownload);
+        ytdlpCopyLink = button(VpTexts.tr("button.videoplayer.copy_link", "Copy Link"), buttonX + (buttonW + GAP) * 3,
+                contentTop + YTDLP_START_Y, buttonW, this::copyYtdlpSourceLink);
         mpvPlatform = button("", buttonX, contentTop + BACKEND_START_Y, buttonW, () -> cyclePlatform(VideoBackends.MPV));
         mpvSelect = button(VpTexts.tr("button.videoplayer.select", "Select"), buttonX + buttonW + GAP, contentTop + BACKEND_START_Y, buttonW, () -> selectBackend(VideoBackends.MPV));
         mpvDownload = button(VpTexts.tr("button.videoplayer.download", "Download"), buttonX + (buttonW + GAP) * 2, contentTop + BACKEND_START_Y, buttonW, () -> startDownload(VideoBackends.MPV));
         mpvCopyLink = button(VpTexts.tr("button.videoplayer.copy_link", "Copy Link"), buttonX + (buttonW + GAP) * 3, contentTop + BACKEND_START_Y, buttonW, () -> copySourceLink(VideoBackends.MPV));
-        vlcPlatform = button("", buttonX, contentTop + BACKEND_START_Y + ROW_HEIGHT, buttonW, () -> cyclePlatform(VideoBackends.VLC));
-        vlcSelect = button(VpTexts.tr("button.videoplayer.select", "Select"), buttonX + buttonW + GAP, contentTop + BACKEND_START_Y + ROW_HEIGHT, buttonW, () -> selectBackend(VideoBackends.VLC));
-        vlcDownload = button(VpTexts.tr("button.videoplayer.download", "Download"), buttonX + (buttonW + GAP) * 2, contentTop + BACKEND_START_Y + ROW_HEIGHT, buttonW, () -> startDownload(VideoBackends.VLC));
-        vlcCopyLink = button(VpTexts.tr("button.videoplayer.copy_link", "Copy Link"), buttonX + (buttonW + GAP) * 3, contentTop + BACKEND_START_Y + ROW_HEIGHT, buttonW, () -> copySourceLink(VideoBackends.VLC));
+        vlcPlatform = button("", buttonX, contentTop + vlcStartY(), buttonW, () -> cyclePlatform(VideoBackends.VLC));
+        vlcSelect = button(VpTexts.tr("button.videoplayer.select", "Select"), buttonX + buttonW + GAP, contentTop + vlcStartY(), buttonW, () -> selectBackend(VideoBackends.VLC));
+        vlcDownload = button(VpTexts.tr("button.videoplayer.download", "Download"), buttonX + (buttonW + GAP) * 2, contentTop + vlcStartY(), buttonW, () -> startDownload(VideoBackends.VLC));
+        vlcCopyLink = button(VpTexts.tr("button.videoplayer.copy_link", "Copy Link"), buttonX + (buttonW + GAP) * 3, contentTop + vlcStartY(), buttonW, () -> copySourceLink(VideoBackends.VLC));
 
         int footerY = panelTop + panelHeight - 28;
         skip = button(VpTexts.tr("button.videoplayer.skip", "Skip"), panelLeft + 24, footerY, 92, this::finish);
@@ -110,6 +144,9 @@ public class StartupGuideScreen extends Screen {
 
         addDrawableChild(proxyField);
         addDrawableChild(ytdlPathField);
+        addDrawableChild(ytdlpPlatform);
+        addDrawableChild(ytdlpDownload);
+        addDrawableChild(ytdlpCopyLink);
         addDrawableChild(mpvPlatform);
         addDrawableChild(mpvSelect);
         addDrawableChild(mpvDownload);
@@ -121,8 +158,11 @@ public class StartupGuideScreen extends Screen {
         addDrawableChild(skip);
         addDrawableChild(done);
 
+        setMpvVisible(!VideoPlayerMain.android);
         layoutWidgets();
         refreshAvailability();
+        refreshInstallationState();
+        refreshYtdlpAvailability();
         syncButtons();
     }
 
@@ -202,12 +242,23 @@ public class StartupGuideScreen extends Screen {
         contentRight = panelLeft + panelWidth - 24;
         contentTop = panelTop + 34;
         contentBottom = Math.max(contentTop + CONTROL_HEIGHT, panelTop + panelHeight - 50);
-        contentHeight = BACKEND_START_Y + ROW_HEIGHT * 2 + 12;
+        contentHeight = vlcStartY() + ROW_HEIGHT + 12;
         contentScroll = Math.clamp(contentScroll, 0, maxContentScroll());
     }
 
+    private int vlcStartY() {
+        return BACKEND_START_Y + (VideoPlayerMain.android ? 0 : ROW_HEIGHT);
+    }
+
+    private void setMpvVisible(boolean visible) {
+        mpvPlatform.visible = visible;
+        mpvSelect.visible = visible;
+        mpvDownload.visible = visible;
+        mpvCopyLink.visible = visible;
+    }
+
     private void layoutWidgets() {
-        if (proxyField == null || ytdlPathField == null || mpvPlatform == null || skip == null || done == null) {
+        if (proxyField == null || ytdlPathField == null || ytdlpPlatform == null || mpvPlatform == null || skip == null || done == null) {
             return;
         }
 
@@ -222,8 +273,18 @@ public class StartupGuideScreen extends Screen {
         ytdlPathField.setY(y + 4);
         ytdlPathField.clip(contentLeft, contentTop, contentRight, contentBottom);
 
+        ytdlpPlatform.setX(buttonX);
+        ytdlpPlatform.setY(y + YTDLP_START_Y);
+        ytdlpPlatform.clip(contentLeft, contentTop, contentRight, contentBottom);
+        ytdlpDownload.setX(buttonX + (buttonW + GAP) * 2);
+        ytdlpDownload.setY(y + YTDLP_START_Y);
+        ytdlpDownload.clip(contentLeft, contentTop, contentRight, contentBottom);
+        ytdlpCopyLink.setX(buttonX + (buttonW + GAP) * 3);
+        ytdlpCopyLink.setY(y + YTDLP_START_Y);
+        ytdlpCopyLink.clip(contentLeft, contentTop, contentRight, contentBottom);
+
         layoutBackendButtons(mpvPlatform, mpvSelect, mpvDownload, mpvCopyLink, buttonX, y + BACKEND_START_Y, buttonW);
-        layoutBackendButtons(vlcPlatform, vlcSelect, vlcDownload, vlcCopyLink, buttonX, y + BACKEND_START_Y + ROW_HEIGHT, buttonW);
+        layoutBackendButtons(vlcPlatform, vlcSelect, vlcDownload, vlcCopyLink, buttonX, y + vlcStartY(), buttonW);
 
         int footerY = panelTop + panelHeight - 28;
         skip.setX(panelLeft + 24);
@@ -262,13 +323,20 @@ public class StartupGuideScreen extends Screen {
         drawText(context, trimToWidth(VpTexts.tr("label.videoplayer.recommended", "Recommended: %s", platformLabel(NativePackageManager.platformKey())), infoW), contentLeft + infoW + GAP, infoY, THEME.secondaryTextColor());
         drawText(context, trimToWidth(VpTexts.tr("label.videoplayer.current_backend", "Current backend: %s", VideoBackends.normalize(VideoPlayerClient.config.videoBackend)), contentRight - contentLeft), contentLeft, infoY + 14, THEME.secondaryTextColor());
 
-        drawBackend(context, contentLeft, y + BACKEND_START_Y, VideoBackends.MPV, VpTexts.tr("label.videoplayer.mpv_recommended", "MPV Recommended"), mpvAvailable);
-        renderWidget(mpvPlatform, context, mouseX, mouseY, delta);
-        renderWidget(mpvSelect, context, mouseX, mouseY, delta);
-        renderWidget(mpvDownload, context, mouseX, mouseY, delta);
-        renderWidget(mpvCopyLink, context, mouseX, mouseY, delta);
+        drawYtdlp(context, contentLeft, y + YTDLP_START_Y);
+        renderWidget(ytdlpPlatform, context, mouseX, mouseY, delta);
+        renderWidget(ytdlpDownload, context, mouseX, mouseY, delta);
+        renderWidget(ytdlpCopyLink, context, mouseX, mouseY, delta);
 
-        drawBackend(context, contentLeft, y + BACKEND_START_Y + ROW_HEIGHT, VideoBackends.VLC, Text.literal("VLC"), vlcAvailable);
+        if (!VideoPlayerMain.android) {
+            drawBackend(context, contentLeft, y + BACKEND_START_Y, VideoBackends.MPV, VpTexts.tr("label.videoplayer.mpv_recommended", "MPV Recommended"), mpvAvailable);
+            renderWidget(mpvPlatform, context, mouseX, mouseY, delta);
+            renderWidget(mpvSelect, context, mouseX, mouseY, delta);
+            renderWidget(mpvDownload, context, mouseX, mouseY, delta);
+            renderWidget(mpvCopyLink, context, mouseX, mouseY, delta);
+        }
+
+        drawBackend(context, contentLeft, y + vlcStartY(), VideoBackends.VLC, Text.literal("VLC"), vlcAvailable);
         renderWidget(vlcPlatform, context, mouseX, mouseY, delta);
         renderWidget(vlcSelect, context, mouseX, mouseY, delta);
         renderWidget(vlcDownload, context, mouseX, mouseY, delta);
@@ -279,7 +347,7 @@ public class StartupGuideScreen extends Screen {
         int color = available ? THEME.executionColor() : THEME.errorColor();
         int count = sourceCount(backend);
         String platform = selectedPlatform(backend);
-        Text installed = NativePackageManager.isInstalled(backend, platform)
+        Text installed = backendInstalled(backend)
                 ? VpTexts.tr("label.videoplayer.installed", "Installed")
                 : VpTexts.tr("label.videoplayer.not_installed", "Not installed");
         Text sources = count <= 0
@@ -296,6 +364,27 @@ public class StartupGuideScreen extends Screen {
         drawText(context, availability, statusX, y, color);
         drawText(context, trimToWidth(platformText(platform), Math.max(24, textW - (platformX - x))), platformX, y, THEME.secondaryTextColor());
         drawText(context, trimToWidth(VpTexts.tr("label.videoplayer.install_source_status", "%s / %s", installed.getString(), sources.getString()), textW), x, y + 16, THEME.secondaryTextColor());
+    }
+
+    private boolean backendInstalled(String backend) {
+        return VideoBackends.MPV.equals(VideoBackends.normalize(backend)) ? mpvInstalled : vlcInstalled;
+    }
+
+    private void drawYtdlp(DrawContext context, int x, int y) {
+        int color = ytdlpAvailable ? THEME.executionColor() : THEME.errorColor();
+        int count = ytdlpSources().size();
+        int textW = Math.max(40, buttonGroupX() - x - GAP);
+        Text availability = ytdlpDetectionTask != null
+                ? VpTexts.tr("label.videoplayer.checking", "Checking")
+                : ytdlpAvailable
+                ? VpTexts.tr("label.videoplayer.available", "Available")
+                : VpTexts.tr("label.videoplayer.unavailable", "Unavailable");
+        drawText(context, Text.literal("yt-dlp"), x, y, THEME.primaryTextColor());
+        drawText(context, availability, x + 48, y, color);
+        Text detail = ytdlpVersion.isBlank()
+                ? VpTexts.tr("label.videoplayer.source_count", "%s sources", count)
+                : VpTexts.tr("label.videoplayer.ytdlp_version", "Version %s", ytdlpVersion);
+        drawText(context, trimToWidth(detail, textW), x, y + 16, THEME.secondaryTextColor());
     }
 
     private void drawScrollbar(DrawContext context) {
@@ -362,20 +451,43 @@ public class StartupGuideScreen extends Screen {
 
     private Text statusLine() {
         if (downloadTask == null) return VpTexts.text(status);
-        String backend = activeBackend.equals(VideoBackends.MPV) ? "MPV" : "VLC";
+        String backend = activeBackend.equals(YtDlpManager.TOOL_NAME)
+                ? "yt-dlp"
+                : activeBackend.equals(VideoBackends.MPV) ? "MPV" : "VLC";
+        String namedSource = sourceName.isBlank() ? "" : " " + sourceName;
         String source = sourceCount <= 0 ? "" : " " + sourceIndex + "/" + sourceCount;
         String progress = "";
         if (totalBytes > 0) {
             long percent = Math.clamp(Math.round(bytesRead * 100.0 / totalBytes), 0, 100);
             progress = " " + percent + "%";
         }
-        return VpTexts.tr("message.videoplayer.native.status_line", "%s%s%s %s", backend, source, progress, VpTexts.text(status).getString());
+        return VpTexts.tr("message.videoplayer.native.status_line", "%s%s%s%s %s", backend, namedSource, source, progress, VpTexts.text(status).getString());
     }
 
     private void syncButtons() {
         boolean idle = downloadTask == null;
-        syncBackendButtons(VideoBackends.MPV, mpvPlatform, mpvSelect, mpvDownload, mpvCopyLink, idle);
+        setMpvVisible(!VideoPlayerMain.android);
+        if (VideoPlayerMain.android) {
+            mpvPlatform.active = false;
+            mpvSelect.active = false;
+            mpvDownload.active = false;
+            mpvCopyLink.active = false;
+        } else {
+            syncBackendButtons(VideoBackends.MPV, mpvPlatform, mpvSelect, mpvDownload, mpvCopyLink, idle);
+        }
         syncBackendButtons(VideoBackends.VLC, vlcPlatform, vlcSelect, vlcDownload, vlcCopyLink, idle);
+        int ytdlpCount = ytdlpSources().size();
+        ytdlpPlatform.active = false;
+        ytdlpPlatform.selected(false);
+        ytdlpPlatform.setMessage(platformText(selectedYtdlpPlatform));
+        ytdlpDownload.active = idle && ytdlpCount > 0;
+        ytdlpCopyLink.active = idle && ytdlpCount > 0;
+        ytdlpDownload.setMessage(ytdlpCount > 0
+                ? VpTexts.tr("button.videoplayer.download", "Download")
+                : VpTexts.tr("button.videoplayer.not_configured", "Not configured"));
+        ytdlpCopyLink.setMessage(ytdlpCount > 1
+                ? VpTexts.tr("button.videoplayer.copy_link_index", "Copy %s/%s", browserIndex.getOrDefault(YtDlpManager.TOOL_NAME, 0) + 1, ytdlpCount)
+                : VpTexts.tr("button.videoplayer.copy_link", "Copy Link"));
         if (proxyField != null) proxyField.active = idle;
         if (ytdlPathField != null) ytdlPathField.active = idle;
         skip.active = idle;
@@ -403,6 +515,7 @@ public class StartupGuideScreen extends Screen {
 
     private void startDownload(String backend) {
         if (downloadTask != null) return;
+        if (VideoPlayerMain.android && VideoBackends.MPV.equals(backend)) return;
         String platform = selectedPlatform(backend);
         List<NativeDownloadConfig.DownloadSource> sources = sources(backend);
         if (sources.isEmpty()) return;
@@ -412,13 +525,70 @@ public class StartupGuideScreen extends Screen {
         status = VpTranslation.of("message.videoplayer.native.prepare_download", "Preparing download");
         sourceIndex = 0;
         sourceCount = sources.size();
+        sourceName = "";
         bytesRead = 0;
         totalBytes = -1;
 
-        downloadTask = CompletableFuture.supplyAsync(() -> NativePackageManager.downloadAndInstall(backend, platform, sources, proxy, progress ->
+        String taskKey = nativeTaskKey(backend, platform);
+        CompletableFuture<NativePackageManager.DownloadResult> sharedTask = NATIVE_DOWNLOAD_TASKS.computeIfAbsent(taskKey,
+                ignored -> CompletableFuture.supplyAsync(() -> NativePackageManager.downloadAndInstall(backend, platform, sources, proxy, progress ->
+                        MinecraftClient.getInstance().execute(() -> {
+                            sourceIndex = progress.sourceIndex();
+                            sourceCount = progress.sourceCount();
+                            sourceName = progress.sourceName();
+                            bytesRead = progress.bytesRead();
+                            totalBytes = progress.totalBytes();
+                            status = progress.message();
+                        }))));
+        downloadTask = sharedTask;
+        sharedTask.whenComplete((result, error) -> {
+            NATIVE_DOWNLOAD_TASKS.remove(taskKey, sharedTask);
+            MinecraftClient.getInstance().execute(() -> {
+                downloadTask = null;
+                if (error != null) {
+                    status = VpTranslations.from(error, "error.videoplayer.native.download_failed", "Download failed: %s", error.getMessage() == null ? "" : error.getMessage());
+                    return;
+                }
+                status = result.message();
+                if (result.success()) {
+                    markBackendInstalled(backend, true);
+                    BackendRefreshResult refreshResult = refreshBackendAfterRuntimeChange(backend);
+                    if (refreshResult == BackendRefreshResult.RESTART_REQUIRED) {
+                        status = VpTranslation.of("message.videoplayer.native.restart_required",
+                                "%s runtime installed. Restart Minecraft to use the new runtime.", backendName(backend));
+                    } else if (refreshResult == BackendRefreshResult.RETRY_FAILED) {
+                        status = VpTranslation.of("error.videoplayer.native.load_failed_after_install",
+                                "%s runtime installed but could not be loaded. Restart Minecraft or check the game log.", backendName(backend));
+                    }
+                    if (!backendAvailable(VideoPlayerClient.config.videoBackend) && backendAvailable(backend)) {
+                        VideoPlayerClient.config.videoBackend = VideoBackends.normalize(backend);
+                        VideoPlayerClient.saveConfig();
+                    }
+                }
+                syncButtons();
+            });
+        });
+    }
+
+    private void startYtdlpDownload() {
+        if (downloadTask != null) return;
+        List<NativeDownloadConfig.DownloadSource> sources = ytdlpSources();
+        if (sources.isEmpty()) return;
+        String proxy = persistProxy();
+        persistYtdlPath();
+        activeBackend = YtDlpManager.TOOL_NAME;
+        status = VpTranslation.of("message.videoplayer.native.prepare_download", "Preparing download");
+        sourceIndex = 0;
+        sourceCount = sources.size();
+        sourceName = "";
+        bytesRead = 0;
+        totalBytes = -1;
+        NativeDownloadConfig config = nativeDownloads();
+        downloadTask = CompletableFuture.supplyAsync(() -> YtDlpManager.downloadAndInstall(config, selectedYtdlpPlatform, proxy, progress ->
                 MinecraftClient.getInstance().execute(() -> {
                     sourceIndex = progress.sourceIndex();
                     sourceCount = progress.sourceCount();
+                    sourceName = progress.sourceName();
                     bytesRead = progress.bytesRead();
                     totalBytes = progress.totalBytes();
                     status = progress.message();
@@ -426,17 +596,17 @@ public class StartupGuideScreen extends Screen {
         downloadTask.whenComplete((result, error) -> MinecraftClient.getInstance().execute(() -> {
             downloadTask = null;
             if (error != null) {
-                status = VpTranslations.from(error, "error.videoplayer.native.download_failed", "Download failed: %s", error.getMessage() == null ? "" : error.getMessage());
+                status = VpTranslations.from(error, "error.videoplayer.native.download_failed", "Download failed: %s",
+                        error.getMessage() == null ? "" : error.getMessage());
                 return;
             }
             status = result.message();
             if (result.success()) {
-                resetLoaders();
-                refreshAvailability();
-                if (!backendAvailable(VideoPlayerClient.config.videoBackend) && backendAvailable(backend)) {
-                    VideoPlayerClient.config.videoBackend = VideoBackends.normalize(backend);
-                    VideoPlayerClient.saveConfig();
-                }
+                ytdlPathField.setText("");
+                VideoPlayerClient.config.mpvYtdlPath = "";
+                VideoPlayerClient.saveConfig();
+                VideoPlayerClient.applyNativePlatformConfig();
+                refreshYtdlpAvailability();
             }
         }));
     }
@@ -447,6 +617,18 @@ public class StartupGuideScreen extends Screen {
         int index = Math.floorMod(browserIndex.getOrDefault(backend, 0), sources.size());
         String url = sources.get(index).url;
         browserIndex.put(backend, (index + 1) % sources.size());
+        copyLink(url);
+    }
+
+    private void copyYtdlpSourceLink() {
+        List<NativeDownloadConfig.DownloadSource> sources = ytdlpSources();
+        if (sources.isEmpty()) return;
+        int index = Math.floorMod(browserIndex.getOrDefault(YtDlpManager.TOOL_NAME, 0), sources.size());
+        browserIndex.put(YtDlpManager.TOOL_NAME, (index + 1) % sources.size());
+        copyLink(sources.get(index).url);
+    }
+
+    private void copyLink(String url) {
         try {
             MinecraftClient.getInstance().keyboard.setClipboard(url);
             status = VpTranslation.of("message.videoplayer.native.link_copied", "Download link copied");
@@ -464,7 +646,7 @@ public class StartupGuideScreen extends Screen {
         if (VideoBackends.MPV.equals(normalized) && !mpvAvailable) {
             status = VpTranslation.of(
                     "message.videoplayer.backend_mpv_unavailable",
-                    "Playback backend set to MPV, but libmpv failed to load on this system. New videos will fall back to VLC. Install system libmpv."
+                    "MPV is unavailable. Download the MPV runtime below; new videos use VLC until installation finishes."
             );
         } else {
             status = VpTranslation.of("message.videoplayer.backend_set", "Playback backend set to %s. Only newly started videos are affected.", normalized);
@@ -481,6 +663,7 @@ public class StartupGuideScreen extends Screen {
     }
 
     private List<NativeDownloadConfig.DownloadSource> sources(String backend, String platform) {
+        if (VideoPlayerMain.android && VideoBackends.MPV.equals(backend)) return List.of();
         return nativeDownloads().sources(backend, platform);
     }
 
@@ -500,11 +683,13 @@ public class StartupGuideScreen extends Screen {
 
     private String currentYtdlPath() {
         if (VideoPlayerClient.config == null || VideoPlayerClient.config.mpvYtdlPath == null) return "";
-        return VideoPlayerClient.config.mpvYtdlPath;
+        String path = VideoPlayerClient.config.mpvYtdlPath.trim();
+        return YtDlpManager.isCurrentManagedExecutable(path) ? "" : path;
     }
 
     private void persistYtdlPath() {
         String path = ytdlPathField == null ? currentYtdlPath() : ytdlPathField.getText().trim();
+        if (YtDlpManager.isCurrentManagedExecutable(path)) path = "";
         if (VideoPlayerClient.config != null && !Objects.equals(VideoPlayerClient.config.mpvYtdlPath, path)) {
             VideoPlayerClient.config.mpvYtdlPath = path;
             VideoPlayerClient.saveConfig();
@@ -512,6 +697,9 @@ public class StartupGuideScreen extends Screen {
     }
 
     private List<String> platformOptions(String backend) {
+        if (VideoPlayerMain.android) {
+            return VideoBackends.MPV.equals(backend) ? List.of() : List.of(NativeDownloadConfig.ANDROID_ARM64);
+        }
         String selected = selectedPlatform(backend);
         String recommended = NativePackageManager.platformKey();
         List<String> result = new ArrayList<>();
@@ -529,6 +717,10 @@ public class StartupGuideScreen extends Screen {
         return result;
     }
 
+    private List<NativeDownloadConfig.DownloadSource> ytdlpSources() {
+        return nativeDownloads().tool(YtDlpManager.TOOL_NAME).sources(selectedYtdlpPlatform);
+    }
+
     private NativeDownloadConfig nativeDownloads() {
         return VideoPlayerClient.nativeDownloadConfig();
     }
@@ -542,6 +734,7 @@ public class StartupGuideScreen extends Screen {
 
     private void selectPlatform(String backend, String platform) {
         String normalized = NativeDownloadConfig.normalizePlatformForCurrentOs(platform);
+        String previous = selectedPlatform(backend);
         if (VideoBackends.MPV.equals(VideoBackends.normalize(backend))) {
             selectedMpvPlatform = normalized;
             VideoPlayerClient.config.nativeMpvPlatform = normalized;
@@ -552,10 +745,20 @@ public class StartupGuideScreen extends Screen {
         VideoPlayerClient.applyNativePlatformConfig();
         VideoPlayerClient.saveConfig();
         browserIndex.remove(backend);
-        resetLoaders();
-        refreshAvailability();
-        status = VpTranslation.of("message.videoplayer.native.platform_selected", "%s platform: %s",
-                VideoBackends.MPV.equals(VideoBackends.normalize(backend)) ? "MPV" : "VLC", platformLabel(normalized));
+        refreshInstallationState();
+        BackendRefreshResult refreshResult = Objects.equals(previous, normalized)
+                ? BackendRefreshResult.AVAILABLE
+                : refreshBackendAfterRuntimeChange(backend);
+        if (refreshResult == BackendRefreshResult.RESTART_REQUIRED) {
+            status = VpTranslation.of("message.videoplayer.native.platform_restart_required",
+                    "%s platform saved as %s. Restart Minecraft to use it.", backendName(backend), platformLabel(normalized));
+        } else if (refreshResult == BackendRefreshResult.RETRY_FAILED) {
+            status = VpTranslation.of("error.videoplayer.native.platform_load_failed",
+                    "%s platform saved as %s, but the runtime is unavailable.", backendName(backend), platformLabel(normalized));
+        } else {
+            status = VpTranslation.of("message.videoplayer.native.platform_selected", "%s platform: %s",
+                    backendName(backend), platformLabel(normalized));
+        }
     }
 
     private String selectedPlatform(String backend) {
@@ -564,8 +767,13 @@ public class StartupGuideScreen extends Screen {
 
     private void syncSelectedPlatformsWithConfig() {
         if (VideoPlayerClient.config == null) return;
-        selectedVlcPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(VideoPlayerClient.config.nativeVlcPlatform);
-        selectedMpvPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(VideoPlayerClient.config.nativeMpvPlatform);
+        if (VideoPlayerMain.android) {
+            selectedVlcPlatform = NativeDownloadConfig.ANDROID_ARM64;
+            selectedMpvPlatform = NativeDownloadConfig.ANDROID_ARM64;
+        } else {
+            selectedVlcPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(VideoPlayerClient.config.nativeVlcPlatform);
+            selectedMpvPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(VideoPlayerClient.config.nativeMpvPlatform);
+        }
         VideoPlayerClient.config.nativeVlcPlatform = selectedVlcPlatform;
         VideoPlayerClient.config.nativeMpvPlatform = selectedMpvPlatform;
         VideoPlayerClient.applyNativePlatformConfig();
@@ -584,18 +792,161 @@ public class StartupGuideScreen extends Screen {
     }
 
     private void refreshAvailability() {
-        vlcAvailable = VlcDecoder.isAvailable();
-        mpvAvailable = MpvVideoBackend.isAvailable();
+        if (VideoPlayerMain.android) {
+            vlcAvailable = vlcInstalled;
+            mpvAvailable = false;
+            return;
+        }
+        if (availabilityTask != null) return;
+        availabilityTask = CompletableFuture.supplyAsync(() -> new AvailabilityState(
+                VlcDecoder.isAvailable(),
+                MpvVideoBackend.isAvailable()
+        ));
+        availabilityTask.whenComplete((state, error) -> MinecraftClient.getInstance().execute(() -> {
+            availabilityTask = null;
+            if (error != null || state == null) {
+                vlcAvailable = false;
+                mpvAvailable = false;
+            } else {
+                vlcAvailable = state.vlcAvailable();
+                mpvAvailable = state.mpvAvailable();
+            }
+            syncButtons();
+        }));
+    }
+
+    private void refreshInstallationState() {
+        if (installationStateTask != null) return;
+        String vlcPlatform = selectedVlcPlatform;
+        String mpvPlatform = selectedMpvPlatform;
+        installationStateTask = CompletableFuture.supplyAsync(() -> new InstallationState(
+                vlcPlatform,
+                NativePackageManager.isInstalled(VideoBackends.VLC, vlcPlatform),
+                mpvPlatform,
+                !VideoPlayerMain.android && NativePackageManager.isInstalled(VideoBackends.MPV, mpvPlatform)
+        ));
+        installationStateTask.whenComplete((state, error) -> MinecraftClient.getInstance().execute(() -> {
+            installationStateTask = null;
+            if (error != null || state == null) return;
+            if (!Objects.equals(state.vlcPlatform(), selectedVlcPlatform)
+                    || !Objects.equals(state.mpvPlatform(), selectedMpvPlatform)) {
+                refreshInstallationState();
+                return;
+            }
+            vlcInstalled = state.vlcInstalled();
+            mpvInstalled = state.mpvInstalled();
+            if (VideoPlayerMain.android) {
+                vlcAvailable = vlcInstalled;
+                mpvAvailable = false;
+                if (!vlcInstalled && NativeDownloadConfig.ANDROID_ARM64.equals(NativePackageManager.platformKey())) {
+                    startBundledAndroidVlcInstall();
+                }
+            }
+            syncButtons();
+        }));
+    }
+
+    private void startBundledAndroidVlcInstall() {
+        if (!VideoPlayerMain.android
+                || downloadTask != null
+                || !NativeDownloadConfig.ANDROID_ARM64.equals(NativePackageManager.platformKey())) {
+            return;
+        }
+        String backend = VideoBackends.VLC;
+        String platform = NativeDownloadConfig.ANDROID_ARM64;
+        activeBackend = backend;
+        status = VpTranslation.of("message.videoplayer.native.prepare_download", "Preparing download");
+        sourceIndex = 0;
+        sourceCount = 0;
+        sourceName = "";
+        bytesRead = 0;
+        totalBytes = -1;
+        String taskKey = nativeTaskKey(backend, platform);
+        CompletableFuture<NativePackageManager.DownloadResult> sharedTask = NATIVE_DOWNLOAD_TASKS.computeIfAbsent(taskKey,
+                ignored -> CompletableFuture.supplyAsync(() -> NativePackageManager.installBundled(
+                        backend,
+                        platform,
+                        NativePackageManager.BUNDLED_ANDROID_VLC_RESOURCE,
+                        NativePackageManager.BUNDLED_ANDROID_VLC_SHA256
+                )));
+        downloadTask = sharedTask;
+        sharedTask.whenComplete((result, error) -> {
+            NATIVE_DOWNLOAD_TASKS.remove(taskKey, sharedTask);
+            MinecraftClient.getInstance().execute(() -> {
+                downloadTask = null;
+                if (error != null) {
+                    status = VpTranslations.from(error, "error.videoplayer.native.bundled_install_failed",
+                            "Bundled native package installation failed: %s", error.getMessage() == null ? "" : error.getMessage());
+                    syncButtons();
+                    return;
+                }
+                status = result.message();
+                if (result.success()) {
+                    markBackendInstalled(backend, true);
+                    vlcAvailable = true;
+                }
+                syncButtons();
+            });
+        });
+    }
+
+    private void refreshYtdlpAvailability() {
+        if (ytdlpDetectionTask != null) return;
+        String configured = ytdlPathField == null ? currentYtdlPath() : ytdlPathField.getText().trim();
+        ytdlpDetectionTask = CompletableFuture.supplyAsync(() -> YtDlpManager.detect(configured));
+        ytdlpDetectionTask.whenComplete((detection, error) -> MinecraftClient.getInstance().execute(() -> {
+            ytdlpDetectionTask = null;
+            ytdlpAvailable = error == null && detection != null && detection.available();
+            ytdlpVersion = ytdlpAvailable ? detection.version() : "";
+            VideoPlayerClient.applyNativePlatformConfig();
+        }));
     }
 
     private boolean backendAvailable(String backend) {
         return VideoBackends.MPV.equals(VideoBackends.normalize(backend)) ? mpvAvailable : vlcAvailable;
     }
 
-    private void resetLoaders() {
-        VlcDecoder.resetLoadState();
-        MpvVideoBackend.resetAvailability();
-        StreamListener.resetLoadState();
+    private void markBackendInstalled(String backend, boolean installed) {
+        if (VideoBackends.MPV.equals(backend)) {
+            mpvInstalled = installed;
+        } else {
+            vlcInstalled = installed;
+        }
+    }
+
+    private String nativeTaskKey(String backend, String platform) {
+        return NativeDownloadConfig.normalizeBackend(backend) + ":" + platform;
+    }
+
+    private BackendRefreshResult refreshBackendAfterRuntimeChange(String backend) {
+        if (VideoPlayerMain.android) {
+            mpvAvailable = false;
+            if (VideoBackends.MPV.equals(backend)) return BackendRefreshResult.RETRY_FAILED;
+            vlcAvailable = vlcInstalled;
+            return vlcAvailable ? BackendRefreshResult.RETRY_SUCCEEDED : BackendRefreshResult.RETRY_FAILED;
+        }
+        if (backendLoaded(backend)) return BackendRefreshResult.RESTART_REQUIRED;
+        boolean available;
+        if (VideoBackends.MPV.equals(VideoBackends.normalize(backend))) {
+            MpvVideoBackend.resetAvailability();
+            available = MpvVideoBackend.isAvailable();
+            mpvAvailable = available;
+        } else {
+            VlcDecoder.resetLoadState();
+            available = VlcDecoder.isAvailable();
+            vlcAvailable = available;
+        }
+        return available ? BackendRefreshResult.RETRY_SUCCEEDED : BackendRefreshResult.RETRY_FAILED;
+    }
+
+    private boolean backendLoaded(String backend) {
+        return VideoBackends.MPV.equals(VideoBackends.normalize(backend))
+                ? MpvVideoBackend.isLoaded()
+                : VlcDecoder.isLoaded();
+    }
+
+    private String backendName(String backend) {
+        return VideoBackends.MPV.equals(VideoBackends.normalize(backend)) ? "MPV" : "VLC";
     }
 
     private void finish() {

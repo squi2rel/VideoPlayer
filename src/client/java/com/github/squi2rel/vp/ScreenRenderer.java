@@ -107,6 +107,7 @@ public class ScreenRenderer {
     public static boolean skybox;
 
     public static void render(WorldRenderContext ctx) {
+        if (CameraRenderer.rendering) return;
         skybox = false;
         Profiler profiler = Profilers.get();
         profiler.push("video");

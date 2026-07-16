@@ -57,6 +57,17 @@ loom {
 
 }
 
+if (findProject(":mcng-core") == null) {
+	sourceSets.client.java {
+		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphCompiler.java"
+		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphManager.java"
+		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphNodes.java"
+		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphStore.java"
+		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphTypes.java"
+		exclude "com/github/squi2rel/vp/creation/MpvFilterGraphScreen.java"
+	}
+}
+
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -72,19 +83,63 @@ dependencies {
 	implementation "com.google.zxing:core:3.5.3"
 	include "com.google.zxing:core:3.5.3"
 
-	implementation project(":mcng-core")
-	implementation project(path: ":mcng-fabric-client", configuration: "namedElements")
-	shadowBundle project(":mcng-core")
-	shadowBundle project(path: ":mcng-fabric-client", configuration: "namedElements")
+	if (findProject(":mcng-core") != null) {
+		implementation project(":mcng-core")
+		implementation project(path: ":mcng-fabric-client", configuration: "namedElements")
+		shadowBundle project(":mcng-core")
+		shadowBundle project(path: ":mcng-fabric-client", configuration: "namedElements")
+	}
 
 	modCompileOnly "maven.modrinth:modmenu:${project.modmenu_version}"
 	modApi "maven.modrinth:vivecraft:1.21.11-1.3.9-fabric"
 	runtimeOnly "com.electronwill.night-config:core:3.6.6"
 	runtimeOnly "com.electronwill.night-config:toml:3.6.6"
+	testImplementation platform("org.junit:junit-bom:5.11.4")
+	testImplementation "org.junit.jupiter:junit-jupiter"
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+test {
+	useJUnitPlatform()
+}
+
+def bundledAndroidVlcUrl = 'https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-arm64-v8a.zip'
+def bundledAndroidVlcSha256 = 'dbae70c264a9d86cd8d7fbd7ca35388cbe973de03636c08f0ac8d7cdb493f9ec'
+def bundledAndroidVlcZip = layout.buildDirectory.file('bundled-native/libvlc-android-arm64-v8a.zip')
+
+tasks.register('downloadBundledAndroidVlc') {
+	inputs.property 'url', bundledAndroidVlcUrl
+	inputs.property 'sha256', bundledAndroidVlcSha256
+	outputs.file bundledAndroidVlcZip
+	doLast {
+		def target = bundledAndroidVlcZip.get().asFile
+		target.parentFile.mkdirs()
+		if (target.isFile()) {
+			def digest = java.security.MessageDigest.getInstance('SHA-256').digest(target.bytes).encodeHex().toString()
+			if (digest == bundledAndroidVlcSha256) return
+			target.delete()
+		}
+		def temporary = new File(target.parentFile, target.name + '.tmp')
+		temporary.delete()
+		new URI(bundledAndroidVlcUrl).toURL().withInputStream { input ->
+			temporary.withOutputStream { output -> output << input }
+		}
+		def digest = java.security.MessageDigest.getInstance('SHA-256').digest(temporary.bytes).encodeHex().toString()
+		if (digest != bundledAndroidVlcSha256) {
+			temporary.delete()
+			throw new GradleException("Bundled Android VLC SHA-256 mismatch: ${digest}")
+		}
+		if (!temporary.renameTo(target)) throw new GradleException('Failed to store bundled Android VLC package')
+	}
 }
 
 processResources {
+	dependsOn tasks.named('downloadBundledAndroidVlc')
 	inputs.property "version", project.version
+	from(bundledAndroidVlcZip) {
+		into 'assets/videoplayer/native/vlc'
+		rename { 'android_arm64-v8a.zip' }
+	}
 
 	filesMatching("fabric.mod.json") {
 		expand "version": inputs.properties.version

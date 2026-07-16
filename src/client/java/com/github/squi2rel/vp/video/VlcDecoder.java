@@ -1,6 +1,8 @@
 package com.github.squi2rel.vp.video;
 
+import com.github.squi2rel.vp.VideoPlayerClient;
 import com.github.squi2rel.vp.VideoPlayerMain;
+import com.github.squi2rel.vp.provider.MediaAddressPolicy;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
@@ -11,9 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 
@@ -62,6 +62,8 @@ public class VlcDecoder {
     private volatile long durationMs;
     private volatile float rate = 1f;
     private volatile boolean paused = true;
+    private volatile boolean desiredPaused;
+    private volatile boolean awaitingPlaybackStart;
 
     public volatile long lastPlayTime;
     public volatile long lastPlayUpdateTime;
@@ -126,18 +128,14 @@ public class VlcDecoder {
         return loadError;
     }
 
+    public static synchronized boolean isLoaded() {
+        return instance != null;
+    }
+
     public static synchronized void resetLoadState() {
-        Pointer oldInstance = instance;
-        instance = null;
+        if (instance != null) return;
         loadError = null;
         loadAttempted = false;
-        if (oldInstance != null) {
-            try {
-                VlcLibrary.releaseInstance(oldInstance);
-            } catch (RuntimeException e) {
-                VideoPlayerMain.LOGGER.warn("Failed to release VLC instance", e);
-            }
-        }
         VlcLibrary.resetLoadState();
     }
 
@@ -166,7 +164,9 @@ public class VlcDecoder {
     public void init(VideoInfo info) {
         if (released.get()) throw new IllegalStateException("decoder already released");
         stopped.set(false);
-        paused = true;
+        awaitingPlaybackStart = true;
+        paused = false;
+        desiredPaused = false;
         rate = 1f;
         durationMs = 0;
         lastPlayTime = 0;
@@ -176,9 +176,18 @@ public class VlcDecoder {
 
     private void startPlayback(VideoInfo info) {
         if (released.get()) return;
+        if (info == null || (!info.path().isBlank() && !MediaAddressPolicy.isAllowed(info.path())
+                || VideoParams.hasDisallowedMediaUrls(info.params()))) {
+            VideoPlayerMain.LOGGER.warn("Rejected unsupported media address");
+            awaitingPlaybackStart = false;
+            stopped.set(true);
+            return;
+        }
         Pointer media = null;
         try {
-            media = VlcLibrary.createMedia(instance, info.path(), withHardwareDecoding(VideoParams.vlcOptions(info.params())));
+            String proxy = VideoPlayerClient.config == null ? "" : VideoPlayerClient.config.nativeDownloadProxy;
+            media = VlcLibrary.createMedia(instance, VideoParams.normalizeStreamPath(info.path()),
+                    withHardwareDecoding(VideoParams.vlcOptions(info.path(), info.params(), proxy)));
             lib.libvlc_media_player_set_media(mediaPlayer, media);
             int result = lib.libvlc_media_player_play(mediaPlayer);
             if (result != 0) {
@@ -193,6 +202,7 @@ public class VlcDecoder {
         } catch (Throwable t) {
             if (!released.get()) {
                 VideoPlayerMain.LOGGER.warn("Failed to start VLC playback", t);
+                awaitingPlaybackStart = false;
                 stopped.set(true);
             }
         } finally {
@@ -224,7 +234,9 @@ public class VlcDecoder {
     public void cleanup() {
         if (!released.compareAndSet(false, true)) return;
         stopped.set(true);
+        awaitingPlaybackStart = false;
         paused = true;
+        desiredPaused = true;
         Runnable releaseTask = () -> {
             detachEvents();
             try {
@@ -237,34 +249,27 @@ public class VlcDecoder {
                 lib.libvlc_media_player_release(mediaPlayer);
             } catch (RuntimeException e) {
                 VideoPlayerMain.LOGGER.warn("Failed to release VLC media player", e);
+            } finally {
+                clearBuffers();
             }
         };
-        boolean nativeReleased = false;
         try {
             if (Thread.currentThread() == controlThread) {
                 releaseTask.run();
             } else {
-                Future<?> release = controlExecutor.submit(releaseTask);
-                release.get(5, TimeUnit.SECONDS);
+                controlExecutor.execute(releaseTask);
             }
-            nativeReleased = true;
         } catch (RejectedExecutionException ignored) {
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            VideoPlayerMain.LOGGER.warn("Interrupted while releasing VLC media player", e);
-        } catch (Exception e) {
-            VideoPlayerMain.LOGGER.warn("Timed out while releasing VLC media player", e);
         } finally {
-            if (nativeReleased) {
-                clearBuffers();
-            }
             controlExecutor.shutdown();
         }
     }
 
     public void stop() {
         if (released.get() || !stopped.compareAndSet(false, true)) return;
+        awaitingPlaybackStart = false;
         paused = true;
+        desiredPaused = true;
         submit(() -> {
             try {
                 lib.libvlc_media_player_stop(mediaPlayer);
@@ -312,6 +317,7 @@ public class VlcDecoder {
 
     public void pause(boolean pause) {
         if (released.get()) return;
+        desiredPaused = pause;
         paused = pause;
         updateProgress(safeTime());
         submit(() -> lib.libvlc_media_player_set_pause(mediaPlayer, pause ? 1 : 0));
@@ -409,8 +415,13 @@ public class VlcDecoder {
         switch (type) {
             case VlcLibrary.LIBVLC_MEDIA_PLAYER_PLAYING -> {
                 if (released.get() || stopped.get()) return;
+                awaitingPlaybackStart = false;
                 paused = false;
                 refreshProperties();
+                if (desiredPaused) {
+                    lib.libvlc_media_player_set_pause(mediaPlayer, 1);
+                    paused = true;
+                }
                 playListener.run();
             }
             case VlcLibrary.LIBVLC_MEDIA_PLAYER_PAUSED -> {
@@ -427,7 +438,12 @@ public class VlcDecoder {
     }
 
     private void finishPlayback() {
-        if (released.get() || stopped.get()) return;
+        if (released.get() || stopped.get() || awaitingPlaybackStart) return;
+        try {
+            if (lib.libvlc_media_player_get_state(mediaPlayer) != VlcLibrary.LIBVLC_ENDED) return;
+        } catch (RuntimeException e) {
+            return;
+        }
         stopped.set(true);
         paused = true;
         finishListener.run();
@@ -465,13 +481,17 @@ public class VlcDecoder {
         private final int index;
         private final int generation;
         private final long id;
+        private final int width;
+        private final int height;
         private final ByteBuffer buffer;
         private boolean closed;
 
-        private DecodedFrame(int index, int generation, long id, ByteBuffer buffer) {
+        private DecodedFrame(int index, int generation, long id, int width, int height, ByteBuffer buffer) {
             this.index = index;
             this.generation = generation;
             this.id = id;
+            this.width = width;
+            this.height = height;
             this.buffer = buffer;
         }
 
@@ -481,6 +501,14 @@ public class VlcDecoder {
 
         public ByteBuffer buffer() {
             return buffer;
+        }
+
+        public int width() {
+            return width;
+        }
+
+        public int height() {
+            return height;
         }
 
         @Override
@@ -513,7 +541,10 @@ public class VlcDecoder {
                                        Pointer pitches, Pointer lines) {
             int sourceWidth = widthPointer.getInt(0);
             int sourceHeight = heightPointer.getInt(0);
-            if (sourceWidth <= 0 || sourceHeight <= 0) return 0;
+            if (!VideoFrameLimits.valid(sourceWidth, sourceHeight)) {
+                VideoPlayerMain.LOGGER.warn("Rejected VLC video frame dimensions {}x{}", sourceWidth, sourceHeight);
+                return 0;
+            }
             chroma.write(0, RV32, 0, RV32.length);
             pitches.setInt(0, sourceWidth * 4);
             lines.setInt(0, sourceHeight);
@@ -563,9 +594,13 @@ public class VlcDecoder {
         }
 
         private void resize(int width, int height) {
+            if (!VideoFrameLimits.valid(width, height)) {
+                clear();
+                return;
+            }
             frameWidth = width;
             frameHeight = height;
-            bufferSize = width * height * 4;
+            bufferSize = VideoFrameLimits.rgbaBytes(width, height);
             for (int i = 0; i < BUFFER_COUNT; i++) {
                 buffers[i] = BufferUtils.createByteBuffer(bufferSize);
                 pointers[i] = Native.getDirectBufferPointer(buffers[i]);
@@ -614,7 +649,7 @@ public class VlcDecoder {
             ByteBuffer view = source.asReadOnlyBuffer();
             view.position(0);
             view.limit(bufferSize);
-            return new DecodedFrame(index, generation, latestFrameId, view);
+            return new DecodedFrame(index, generation, latestFrameId, frameWidth, frameHeight, view);
         }
 
         private synchronized void release(int index, int frameGeneration) {

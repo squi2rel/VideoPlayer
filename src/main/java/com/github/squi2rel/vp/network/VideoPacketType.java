@@ -26,7 +26,10 @@ public enum VideoPacketType {
     SET_SCREEN_METADATA(19),
     SEEK(20),
     REQUEST_RESULT(21),
-    PERMISSIONS(22);
+    PERMISSIONS(22),
+    RESET_CLIENT(23),
+    PROTOCOL_REJECT(24),
+    HANDSHAKE_ACK(25);
 
     private static final Map<Integer, VideoPacketType> BY_ID = new HashMap<>();
 

@@ -96,7 +96,7 @@ public final class BiliAuthRefresher {
     private static RefreshInfo refreshInfo(String cookie) throws Exception {
         String csrf = csrf(cookie);
         URI uri = URI.create(COOKIE_INFO_URL + "?csrf=" + encode(csrf));
-        HttpResponse<String> response = BiliHttp.CLIENT.send(baseRequest(uri, cookie).GET().build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = BiliHttp.CLIENT.send(baseRequest(uri, cookie).GET().build(), BiliHttp.limitedStringBodyHandler());
         ensureHttpOk(response);
         JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
         ensureApiOk(root, "Bilibili cookie info failed");
@@ -136,7 +136,7 @@ public final class BiliAuthRefresher {
     private static String refreshCsrf(String cookie, long timestamp) throws Exception {
         String path = correspondPath(timestamp);
         URI uri = URI.create(String.format(CORRESPOND_URL, path));
-        HttpResponse<String> response = BiliHttp.CLIENT.send(baseRequest(uri, cookie).GET().build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = BiliHttp.CLIENT.send(baseRequest(uri, cookie).GET().build(), BiliHttp.limitedStringBodyHandler());
         ensureHttpOk(response);
         Matcher matcher = REFRESH_CSRF_PATTERN.matcher(response.body());
         if (!matcher.find()) throw new IllegalStateException("Bilibili refresh csrf was not found");
@@ -154,7 +154,7 @@ public final class BiliAuthRefresher {
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
-        HttpResponse<String> response = BiliHttp.CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = BiliHttp.CLIENT.send(request, BiliHttp.limitedStringBodyHandler());
         ensureHttpOk(response);
         JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
         ensureApiOk(root, "Bilibili cookie refresh failed");
@@ -177,7 +177,7 @@ public final class BiliAuthRefresher {
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
-        HttpResponse<String> response = BiliHttp.CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = BiliHttp.CLIENT.send(request, BiliHttp.limitedStringBodyHandler());
         ensureHttpOk(response);
         ensureApiOk(JsonParser.parseString(response.body()).getAsJsonObject(), "Bilibili cookie refresh confirm failed");
     }

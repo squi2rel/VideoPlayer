@@ -1,17 +1,18 @@
 package com.github.squi2rel.vp.danmaku;
 
+import com.github.squi2rel.vp.HttpProxyConfig;
 import com.github.squi2rel.vp.VideoPlayerClient;
+import com.github.squi2rel.vp.provider.MediaAddressPolicy;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.video.VideoParams;
 
-import java.net.Authenticator;
-import java.net.InetSocketAddress;
-import java.net.PasswordAuthentication;
-import java.net.ProxySelector;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -22,6 +23,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 final class YouTubeSubtitleFetcher {
+    private static final int MAX_SUBTITLE_BYTES = 4 * 1024 * 1024;
     private static final Pattern TIMING = Pattern.compile("^(\\S+)\\s+-->\\s+(\\S+).*$");
     private static final Pattern TAG = Pattern.compile("<[^>]+>");
     private static final String UA = "Mozilla/5.0";
@@ -72,11 +74,16 @@ final class YouTubeSubtitleFetcher {
             return BiliCcSubtitleFetcher.SubtitleTrack.empty();
         }
         try {
-            HttpResponse<String> response = httpClient().send(request(option), HttpResponse.BodyHandlers.ofString());
+            if (!MediaAddressPolicy.isAllowed(option.url())) return BiliCcSubtitleFetcher.SubtitleTrack.empty();
+            HttpResponse<InputStream> response = httpClient().send(request(option), HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                response.body().close();
                 return BiliCcSubtitleFetcher.SubtitleTrack.empty();
             }
-            return new BiliCcSubtitleFetcher.SubtitleTrack(option.key(), option.label(), parseVtt(response.body()));
+            try (InputStream input = response.body()) {
+                return new BiliCcSubtitleFetcher.SubtitleTrack(option.key(), option.label(),
+                        parseVtt(new String(readLimited(input), StandardCharsets.UTF_8)));
+            }
         } catch (Exception ignored) {
             return BiliCcSubtitleFetcher.SubtitleTrack.empty();
         }
@@ -96,25 +103,9 @@ final class YouTubeSubtitleFetcher {
     private static HttpClient httpClient() {
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15))
-                .followRedirects(HttpClient.Redirect.NORMAL);
-        String proxy = VideoParams.normalizeHttpProxy(VideoPlayerClient.config == null ? "" : VideoPlayerClient.config.nativeDownloadProxy);
-        if (proxy.isBlank()) return builder.build();
-        URI uri = URI.create(proxy);
-        int port = uri.getPort() > 0 ? uri.getPort() : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
-        builder.proxy(ProxySelector.of(new InetSocketAddress(uri.getHost(), port)));
-        String userInfo = uri.getUserInfo();
-        if (userInfo != null && !userInfo.isBlank()) {
-            int separator = userInfo.indexOf(':');
-            String username = separator < 0 ? userInfo : userInfo.substring(0, separator);
-            String password = separator < 0 ? "" : userInfo.substring(separator + 1);
-            builder.authenticator(new Authenticator() {
-                @Override
-                protected PasswordAuthentication getPasswordAuthentication() {
-                    return new PasswordAuthentication(username, password.toCharArray());
-                }
-            });
-        }
-        return builder.build();
+                .followRedirects(HttpClient.Redirect.NEVER);
+        String proxy = VideoPlayerClient.config == null ? "" : VideoPlayerClient.config.nativeDownloadProxy;
+        return HttpProxyConfig.parse(proxy).configure(builder).build();
     }
 
     private static List<BiliCcSubtitleFetcher.SubtitleCue> parseVtt(String body) {
@@ -142,6 +133,22 @@ final class YouTubeSubtitleFetcher {
         }
         cues.sort(Comparator.comparingLong(BiliCcSubtitleFetcher.SubtitleCue::fromMs));
         return List.copyOf(cues);
+    }
+
+    private static byte[] readLimited(InputStream input) throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[64 * 1024];
+        int total = 0;
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+            if (read == 0) continue;
+            if (total > MAX_SUBTITLE_BYTES - read) {
+                throw new IllegalStateException("Subtitle response is too large");
+            }
+            output.write(buffer, 0, read);
+            total += read;
+        }
+        return output.toByteArray();
     }
 
     private static long parseTimestamp(String value) {

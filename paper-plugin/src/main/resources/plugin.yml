@@ -3,7 +3,8 @@ main: com.github.squi2rel.vp.VideoPlayerPaperPlugin
 version: ${version}
 api-version: '1.21'
 folia-supported: true
-author: squi2rel
+softdepend: [Residence]
+authors: [squi2rel, cloudfl4re]
 description: VideoPlayer server plugin bridge for the Fabric client mod.
 permissions:
   videoplayer.admin:

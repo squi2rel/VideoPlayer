@@ -1,8 +1,10 @@
 package com.github.squi2rel.vp.video;
 
+import com.github.squi2rel.vp.DataHolder;
 import com.github.squi2rel.vp.network.ByteBufUtils;
 import com.github.squi2rel.vp.network.VideoPackets;
 import com.github.squi2rel.vp.provider.VideoInfo;
+import com.github.squi2rel.vp.provider.VideoProviders;
 import io.netty.buffer.ByteBuf;
 import org.joml.Vector3f;
 
@@ -12,9 +14,13 @@ import static com.github.squi2rel.vp.VideoPlayerMain.LOGGER;
 
 public class VideoScreen {
     public static final int MAX_NAME_LENGTH = 32;
-    public static final int MAX_PLAY_URL_LENGTH = 1024;
+    public static final int MAX_NAME_BYTES = MAX_NAME_LENGTH * 4;
+    public static final int MAX_PLAY_URL_BYTES = 1024;
+    public static final int MAX_PLAY_URL_LENGTH = MAX_PLAY_URL_BYTES;
     public static final int MAX_IDLE_PLAY_ITEMS = 32;
-    public static final int MAX_IDLE_PLAY_URL_LENGTH = MAX_PLAY_URL_LENGTH;
+    public static final int MAX_IDLE_PLAY_URL_BYTES = MAX_PLAY_URL_BYTES;
+    public static final int MAX_IDLE_PLAY_URL_LENGTH = MAX_IDLE_PLAY_URL_BYTES;
+    public static final int MAX_IDLE_PLAY_TOTAL_BYTES = 24_000;
     public static final int DEFAULT_SPHERE_SEGMENTS = 32;
     public static final int MIN_SPHERE_SEGMENTS = 4;
     public static final int MAX_SPHERE_SEGMENTS = 128;
@@ -44,12 +50,16 @@ public class VideoScreen {
     public transient ArrayDeque<VideoInfo> infos = new ArrayDeque<>();
     private transient PlaybackQueue queue;
     private transient PlaybackController playback;
+    private transient OrderedPlayAdmissions admissions;
     private transient ScreenBroadcaster broadcaster;
     private transient ScreenGeometry geometry;
     private transient int idlePlayIndex;
     private transient ArrayList<Integer> idlePlayShuffle = new ArrayList<>();
     private transient int idlePlayShuffleIndex;
     private transient String lastIdlePlayUrl;
+    private transient long serverPluginEpoch;
+    private transient long serverScreenEpoch;
+    private transient boolean serverActive;
 
     public VideoScreen(VideoArea area, String name, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, String source) {
         this(area, name, List.of(p1, p2, p3, p4), source);
@@ -86,6 +96,7 @@ public class VideoScreen {
     }
 
     public void ensureValidState() {
+        if (vertices == null) vertices = new ArrayList<>();
         if (source == null) source = "";
         if (metadata == null) metadata = new ScreenMetadata();
         if (surface == null) surface = ScreenSurface.FLAT;
@@ -105,6 +116,14 @@ public class VideoScreen {
         sanitizeIdlePlay();
     }
 
+    public boolean hasValidDisplayConfig() {
+        return Float.isFinite(u1) && Float.isFinite(v1)
+                && Float.isFinite(u2) && Float.isFinite(v2)
+                && Float.isFinite(scaleX) && Float.isFinite(scaleY)
+                && scaleX >= 0.0625f && scaleX <= 16f
+                && scaleY >= 0.0625f && scaleY <= 16f;
+    }
+
     public void copyDisplayConfigFrom(VideoScreen other) {
         if (other == null) return;
         surface = other.surface == null ? ScreenSurface.FLAT : other.surface;
@@ -118,21 +137,11 @@ public class VideoScreen {
         sphereRotY = other.sphereRotY;
         sphereRotZ = other.sphereRotZ;
         sphereSkybox = other.sphereSkybox;
-        setIdlePlayConfig(other.idlePlayUrls, other.idlePlayRandom);
         ensureValidState();
     }
 
     public void setIdlePlayConfig(List<String> urls, boolean random) {
-        idlePlayUrls = new ArrayList<>();
-        if (urls != null) {
-            for (String url : urls) {
-                if (url == null) continue;
-                String trimmed = url.trim();
-                if (trimmed.isEmpty()) continue;
-                idlePlayUrls.add(trimmed);
-                if (idlePlayUrls.size() >= MAX_IDLE_PLAY_ITEMS) break;
-            }
-        }
+        idlePlayUrls = normalizeIdlePlay(urls, true);
         idlePlayRandom = random;
         resetIdlePlayOrder();
     }
@@ -182,19 +191,7 @@ public class VideoScreen {
     }
 
     private void sanitizeIdlePlay() {
-        if (idlePlayUrls == null) {
-            idlePlayUrls = new ArrayList<>();
-            return;
-        }
-        ArrayList<String> clean = new ArrayList<>();
-        for (String url : idlePlayUrls) {
-            if (url == null) continue;
-            String trimmed = url.trim();
-            if (trimmed.isEmpty()) continue;
-            clean.add(trimmed);
-            if (clean.size() >= MAX_IDLE_PLAY_ITEMS) break;
-        }
-        idlePlayUrls = clean;
+        idlePlayUrls = normalizeIdlePlay(idlePlayUrls, false);
         if (idlePlayShuffle == null) idlePlayShuffle = new ArrayList<>();
         if (idlePlayIndex < 0) idlePlayIndex = 0;
         if (!idlePlayUrls.isEmpty()) idlePlayIndex %= idlePlayUrls.size();
@@ -208,12 +205,77 @@ public class VideoScreen {
         return Math.clamp(value <= 0 ? DEFAULT_SPHERE_SEGMENTS : value, MIN_SPHERE_SEGMENTS, MAX_SPHERE_SEGMENTS);
     }
 
+    public static boolean validName(String value) {
+        return value != null && !value.isBlank() && validNameInput(value);
+    }
+
+    public static boolean validNameInput(String value) {
+        return value != null
+                && value.codePointCount(0, value.length()) <= MAX_NAME_LENGTH
+                && ByteBufUtils.utf8Length(value) <= MAX_NAME_BYTES;
+    }
+
+    public static boolean validPlayUrl(String value) {
+        return value != null && !value.isBlank() && validPlayUrlInput(value.trim());
+    }
+
+    public static boolean validPlayUrlInput(String value) {
+        return value != null && ByteBufUtils.utf8Length(value) <= MAX_PLAY_URL_BYTES;
+    }
+
+    public static boolean validIdlePlayUrl(String value) {
+        return value != null && !value.isBlank() && validIdlePlayUrlInput(value.trim());
+    }
+
+    public static boolean validIdlePlayUrlInput(String value) {
+        return value != null && ByteBufUtils.utf8Length(value) <= MAX_IDLE_PLAY_URL_BYTES;
+    }
+
+    public static boolean validIdlePlayConfig(List<String> urls) {
+        try {
+            validatedIdlePlayConfig(urls);
+            return true;
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
+    public static List<String> validatedIdlePlayConfig(List<String> urls) {
+        return List.copyOf(normalizeIdlePlay(urls, true));
+    }
+
+    private static ArrayList<String> normalizeIdlePlay(List<String> urls, boolean rejectInvalid) {
+        ArrayList<String> clean = new ArrayList<>();
+        if (urls == null) return clean;
+        int totalBytes = 0;
+        for (String url : urls) {
+            if (url == null) continue;
+            String trimmed = url.trim();
+            if (trimmed.isEmpty()) continue;
+            int bytes = ByteBufUtils.utf8Length(trimmed);
+            boolean valid = bytes <= MAX_IDLE_PLAY_URL_BYTES
+                    && clean.size() < MAX_IDLE_PLAY_ITEMS
+                    && totalBytes + bytes <= MAX_IDLE_PLAY_TOTAL_BYTES;
+            if (!valid) {
+                if (rejectInvalid) throw new IllegalArgumentException("IdlePlay configuration exceeds protocol limits");
+                continue;
+            }
+            clean.add(trimmed);
+            totalBytes += bytes;
+        }
+        return clean;
+    }
+
     public void initServer() {
         ensureValidState();
+        serverPluginEpoch = DataHolder.lifecycleEpoch();
+        serverScreenEpoch++;
+        serverActive = true;
         queue = new PlaybackQueue(this);
         infos = queue.rawInfos();
         broadcaster = new ScreenBroadcaster(this);
         playback = new PlaybackController(this, queue, broadcaster);
+        admissions = new OrderedPlayAdmissions(this);
     }
 
     public int skipped() {
@@ -221,8 +283,18 @@ public class VideoScreen {
     }
 
     public void addInfo(VideoInfo info) {
-        LOGGER.info("added info: {} {} {}", info.playerName(), info.name(), info.path());
-        queue.add(info);
+        addResolvedInfos(List.of(info));
+    }
+
+    public void addResolvedInfos(List<VideoInfo> resolved) {
+        if (!serverActive || resolved == null || resolved.isEmpty()) return;
+        boolean added = false;
+        for (VideoInfo info : resolved) {
+            if (info == null || !queue.add(info)) continue;
+            LOGGER.info("added info: {} {} {}", info.playerName(), info.name(), VideoProviders.redactedSource(info.path()));
+            added = true;
+        }
+        if (!added) return;
         playNext();
         syncInfo();
     }
@@ -255,7 +327,10 @@ public class VideoScreen {
     }
 
     public void remove() {
-        playback.stopAndClear(false);
+        serverActive = false;
+        serverScreenEpoch++;
+        if (admissions != null) admissions.close();
+        if (playback != null) playback.stopAndClear(false);
     }
 
     public void playNext() {
@@ -274,13 +349,65 @@ public class VideoScreen {
         return playback != null && playback.isIdlePlaying();
     }
 
+    public long currentPlaybackGeneration() {
+        return playback == null ? 0L : playback.generation();
+    }
+
     public IVideoListener getListener() {
-        return playback.listener();
+        return playback == null ? null : playback.listener();
+    }
+
+    public ScreenLifecycleToken captureLifecycleToken() {
+        return new ScreenLifecycleToken(serverPluginEpoch, serverScreenEpoch, ScreenKey.of(this));
+    }
+
+    public boolean isLifecycleCurrent(ScreenLifecycleToken token) {
+        return token != null
+                && serverActive
+                && serverPluginEpoch == token.pluginEpoch()
+                && serverScreenEpoch == token.screenEpoch()
+                && ScreenKey.of(this).equals(token.key())
+                && DataHolder.lifecycleActive(serverPluginEpoch);
+    }
+
+    public boolean serverActive() {
+        return serverActive && DataHolder.lifecycleActive(serverPluginEpoch);
+    }
+
+    public long serverPluginEpoch() {
+        return serverPluginEpoch;
+    }
+
+    public int queueSize() {
+        return queue == null ? 0 : queue.size();
+    }
+
+    public int pendingPlayAdmissions() {
+        return admissions == null ? 0 : admissions.pendingCount();
+    }
+
+    public OrderedPlayAdmissions.Reservation reservePlayAdmission(java.util.function.Consumer<OrderedPlayAdmissions.Result> callback) {
+        return admissions == null ? null : admissions.reserve(callback);
+    }
+
+    public void attachPlayAdmission(OrderedPlayAdmissions.Reservation reservation, java.util.concurrent.CompletableFuture<VideoInfo> future) {
+        if (admissions == null) {
+            if (future != null) future.cancel(true);
+            return;
+        }
+        admissions.attach(reservation, future);
+    }
+
+    public void failPlayAdmission(OrderedPlayAdmissions.Reservation reservation, Throwable error) {
+        if (admissions != null) admissions.fail(reservation, error);
     }
 
     public static VideoScreen read(ByteBuf buf, VideoArea area) {
-        String name = ByteBufUtils.readString(buf, MAX_NAME_LENGTH);
+        String name = ByteBufUtils.readString(buf, MAX_NAME_BYTES);
         int size = buf.readUnsignedByte();
+        if (size > ScreenGeometry.MAX_VERTICES) {
+            throw new IllegalStateException("Screen vertex count exceeds " + ScreenGeometry.MAX_VERTICES);
+        }
         ArrayList<Vector3f> vertices = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             vertices.add(ByteBufUtils.readVec3(buf));
@@ -289,7 +416,7 @@ public class VideoScreen {
                 area,
                 name,
                 vertices,
-                ByteBufUtils.readString(buf, MAX_NAME_LENGTH)
+                ByteBufUtils.readString(buf, MAX_NAME_BYTES)
         ).readDisplayConfig(buf);
     }
 
@@ -316,7 +443,6 @@ public class VideoScreen {
         sphereRotY = buf.readFloat();
         sphereRotZ = buf.readFloat();
         sphereSkybox = buf.readBoolean();
-        VideoPackets.readIdlePlayConfig(buf, this);
         ensureValidState();
         return this;
     }
@@ -338,6 +464,5 @@ public class VideoScreen {
         buf.writeFloat(screen.sphereRotY);
         buf.writeFloat(screen.sphereRotZ);
         buf.writeBoolean(screen.sphereSkybox);
-        VideoPackets.writeIdlePlayConfig(buf, screen);
     }
 }

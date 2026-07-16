@@ -9,6 +9,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
+import java.io.InputStream;
+import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -24,9 +26,9 @@ public class BiliBiliLiveProvider extends BiliBiliProvider {
         if (!matcher.find()) return null;
         String cid = matcher.group();
         return CompletableFuture.supplyAsync(() -> {
-            try (HttpClient client = HttpClient.newHttpClient()) {
-                HttpResponse<String> response = client.send(makeRequest(String.format(FETCH_URL, cid)), HttpResponse.BodyHandlers.ofString());
-                JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject().getAsJsonObject("data");
+            try (HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build()) {
+                HttpResponse<InputStream> response = client.send(makeRequest(String.format(FETCH_URL, cid)), HttpResponse.BodyHandlers.ofInputStream());
+                JsonObject root = JsonParser.parseString(responseBody(response)).getAsJsonObject().getAsJsonObject("data");
                 if (root.get("live_status").getAsLong() != 1) {
                     source.reply(VpTranslation.of("message.videoplayer.bilibili_live_offline", "The live room is not streaming"));
                     return null;
@@ -38,9 +40,9 @@ public class BiliBiliLiveProvider extends BiliBiliProvider {
             }
         }).thenApply(meta -> {
             if (meta == null) return null;
-            try (HttpClient client = HttpClient.newHttpClient()) {
-                HttpResponse<String> response = client.send(makeRequest(String.format(PLAY_URL, meta.cid())), HttpResponse.BodyHandlers.ofString());
-                JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject().getAsJsonObject("data");
+            try (HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build()) {
+                HttpResponse<InputStream> response = client.send(makeRequest(String.format(PLAY_URL, meta.cid())), HttpResponse.BodyHandlers.ofInputStream());
+                JsonObject root = JsonParser.parseString(responseBody(response)).getAsJsonObject().getAsJsonObject("data");
                 String url = root.getAsJsonArray("durl").get(0).getAsJsonObject().get("url").getAsString();
                 return new VideoInfo(source.name(), meta.title(), url, str, System.currentTimeMillis() + 10000, false, MPV_PARAMS);
             } catch (Exception e) {

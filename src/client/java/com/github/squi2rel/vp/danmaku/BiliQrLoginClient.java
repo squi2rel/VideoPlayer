@@ -36,7 +36,7 @@ public final class BiliQrLoginClient {
         HttpRequest request = baseRequest(URI.create(GENERATE_URL))
                 .GET()
                 .build();
-        HttpResponse<String> response = BiliHttp.CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = BiliHttp.CLIENT.send(request, BiliHttp.limitedStringBodyHandler());
         ensureHttpOk(response);
         JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
         ensureApiOk(root, "Failed to generate Bilibili QR code");
@@ -52,7 +52,7 @@ public final class BiliQrLoginClient {
         HttpRequest request = baseRequest(URI.create(GENERATE_URL))
                 .GET()
                 .build();
-        return BiliHttp.CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+        return BiliHttp.CLIENT.sendAsync(request, BiliHttp.limitedStringBodyHandler())
                 .thenApply(response -> {
                     ensureHttpOk(response);
                     JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
@@ -71,7 +71,7 @@ public final class BiliQrLoginClient {
         HttpRequest request = baseRequest(URI.create(String.format(POLL_URL, key)))
                 .GET()
                 .build();
-        HttpResponse<String> response = BiliHttp.CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = BiliHttp.CLIENT.send(request, BiliHttp.limitedStringBodyHandler());
         ensureHttpOk(response);
 
         JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
@@ -95,7 +95,7 @@ public final class BiliQrLoginClient {
         HttpRequest request = baseRequest(URI.create(String.format(POLL_URL, key)))
                 .GET()
                 .build();
-        return BiliHttp.CLIENT.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+        return BiliHttp.CLIENT.sendAsync(request, BiliHttp.limitedStringBodyHandler())
                 .thenApply(response -> {
                     ensureHttpOk(response);
                     JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
@@ -120,7 +120,7 @@ public final class BiliQrLoginClient {
                 .GET();
         String sanitized = cookie == null ? "" : cookie.trim();
         if (!sanitized.isBlank()) builder.header("Cookie", sanitized);
-        HttpResponse<String> response = BiliHttp.CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = BiliHttp.CLIENT.send(builder.build(), BiliHttp.limitedStringBodyHandler());
         ensureHttpOk(response);
         JsonObject root = JsonParser.parseString(response.body()).getAsJsonObject();
         JsonObject data = root.getAsJsonObject("data");

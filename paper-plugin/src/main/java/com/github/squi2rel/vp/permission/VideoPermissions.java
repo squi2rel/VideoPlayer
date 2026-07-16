@@ -2,11 +2,26 @@ package com.github.squi2rel.vp.permission;
 
 import org.bukkit.entity.Player;
 
+import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 
 public final class VideoPermissions {
     public static final String ADMIN = "videoplayer.admin";
+    private static final Set<VideoPermissionAction> RESIDENCE_CONTROLLED_ACTIONS = EnumSet.of(
+            VideoPermissionAction.FORCE_SKIP,
+            VideoPermissionAction.SET_SKIP_PERCENT,
+            VideoPermissionAction.CREATE_AREA,
+            VideoPermissionAction.REMOVE_AREA,
+            VideoPermissionAction.CREATE_SCREEN,
+            VideoPermissionAction.REMOVE_SCREEN,
+            VideoPermissionAction.UPDATE_SCREEN,
+            VideoPermissionAction.SET_UV,
+            VideoPermissionAction.SET_SCALE,
+            VideoPermissionAction.SET_METADATA,
+            VideoPermissionAction.SET_IDLE_PLAY
+    );
     private static final GlobalPermissionChecker ALLOW_GLOBAL = (player, action, context) -> true;
     private static final AreaPermissionChecker ALLOW_AREA = (player, action, context) -> true;
 
@@ -31,10 +46,15 @@ public final class VideoPermissions {
 
     public static boolean allowed(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context) {
         VideoPermissionContext safeContext = context == null ? VideoPermissionContext.global(null) : context;
-        if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.hasAction(action)) return false;
-        if (!globalChecker.allowed(player, action, safeContext)) return false;
+        if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.online()) return false;
+        if (player.opOrGameMaster()) return true;
+        boolean residenceControlled = RESIDENCE_CONTROLLED_ACTIONS.contains(action);
+        if (!residenceControlled
+                && player instanceof BukkitPermissionPlayer bukkit
+                && !bukkit.hasAction(action)) return false;
+        if (!residenceControlled && !globalChecker.allowed(player, action, safeContext)) return false;
         if (!safeContext.hasArea()) return true;
-        return player.opOrGameMaster() || areaChecker.allowed(player, action, safeContext);
+        return areaChecker.allowed(player, action, safeContext);
     }
 
     public static long mask(VideoPermissionPlayer player, VideoPermissionContext context) {
@@ -69,6 +89,10 @@ public final class VideoPermissions {
 
         boolean hasAction(VideoPermissionAction action) {
             return player.hasPermission("videoplayer.action." + action.name().toLowerCase(Locale.ROOT));
+        }
+
+        boolean online() {
+            return player.isOnline();
         }
     }
 }

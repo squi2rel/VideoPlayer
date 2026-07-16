@@ -11,6 +11,9 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 public class VideoArea {
+    public static final int MAX_AREAS_PER_WORLD = 256;
+    public static final int MAX_SCREENS = 64;
+    public static final float MAX_AXIS_LENGTH = 512;
     public Vector3f min = new Vector3f();
     public Vector3f max = new Vector3f();
     public String name;
@@ -43,7 +46,7 @@ public class VideoArea {
     }
 
     public boolean inBounds(double x, double y, double z) {
-        return min.x <= x && min.y <= y && min.z <= z && max.x >= x && max.y >= y && max.z >= z;
+        return min.x <= x && min.y <= y && min.z <= z && x < max.x && y < max.y && z < max.z;
     }
 
     public boolean addPlayer(UUID uuid) {
@@ -103,6 +106,14 @@ public class VideoArea {
         return null;
     }
 
+    public boolean isScreenReferenced(String name) {
+        if (name == null || name.isEmpty()) return false;
+        for (VideoScreen screen : screens) {
+            if (screen != null && name.equals(screen.source)) return true;
+        }
+        return false;
+    }
+
     public VideoScreen removeScreen(String name) {
         VideoScreen screen = getScreen(name);
         if (screen != null) {
@@ -115,6 +126,15 @@ public class VideoArea {
 
     public static VideoArea from(Vector3f v, Vector3f v2, String name, String dim) {
         return new VideoArea(v, v2, name, dim);
+    }
+
+    public static boolean validSize(Vector3f first, Vector3f second) {
+        return first != null && second != null
+                && Float.isFinite(first.x) && Float.isFinite(first.y) && Float.isFinite(first.z)
+                && Float.isFinite(second.x) && Float.isFinite(second.y) && Float.isFinite(second.z)
+                && Math.abs((double) first.x - second.x) <= MAX_AXIS_LENGTH
+                && Math.abs((double) first.y - second.y) <= MAX_AXIS_LENGTH
+                && Math.abs((double) first.z - second.z) <= MAX_AXIS_LENGTH;
     }
 
     public static void write(ByteBuf buf, VideoArea area) {

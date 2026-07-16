@@ -11,10 +11,6 @@
 #   mpv / linux / x64
 #   mpv / linux / arm32
 #   mpv / linux / arm64
-#   mpv / android / arm64-v8a
-#   mpv / android / armeabi-v7a
-#   mpv / android / x86
-#   mpv / android / x86_64
 #   vlc / windows / x86
 #   vlc / windows / x64
 #   vlc / windows / arm64
@@ -23,9 +19,6 @@
 #   vlc / linux / arm64
 #   vlc / linux / x64
 #   vlc / android / arm64-v8a
-#   vlc / android / armeabi-v7a
-#   vlc / android / x86
-#   vlc / android / x86_64
 native:
   # Options: mpv, vlc. Empty means mpv.
   backend: ""
@@ -38,7 +31,7 @@ native:
   #   windows: x86, x64, arm64
   #   macos: x64, arm64
   #   linux: x86, x64, arm32, arm64
-  #   android: arm64-v8a, armeabi-v7a, x86, x86_64
+  #   android: arm64-v8a with the vlc backend only
   arch: ""
 
   # HTTP(S) proxy used for native runtime downloads and YouTube yt-dlp/mpv playback.
@@ -47,5 +40,6 @@ native:
   download-proxy: ""
 
   # Optional yt-dlp executable path for YouTube metadata and MPV's ytdl hook.
-  # Leave empty to search PATH. Examples: /usr/bin/yt-dlp, C:\Tools\yt-dlp.exe
+  # Leave empty to use VideoPlayer's managed version, PATH, or automatic server installation.
+  # Examples: /usr/bin/yt-dlp, C:\Tools\yt-dlp.exe
   mpv-ytdl-path: ""

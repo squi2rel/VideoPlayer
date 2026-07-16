@@ -1,5 +1,7 @@
 package com.github.squi2rel.vp.video;
 
+import com.github.squi2rel.vp.provider.MediaAddressPolicy;
+
 import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.net.URLDecoder;
@@ -32,6 +34,20 @@ public final class VideoParams {
     }
 
     public static String mpvLoadOptions(String[] params, String configuredProxy, String configuredYtdlPath, String lavfiComplex) {
+        return mpvLoadOptions(params, configuredProxy, configuredYtdlPath, lavfiComplex, false);
+    }
+
+    public static String mpvLoadOptionsForPath(String rawPath, String[] params, String configuredProxy, String configuredYtdlPath) {
+        return mpvLoadOptions(params, configuredProxy, configuredYtdlPath, "", isRtspTcp(rawPath));
+    }
+
+    public static String mpvLoadOptionsForPath(String rawPath, String[] params, String configuredProxy, String configuredYtdlPath,
+                                                String lavfiComplex) {
+        return mpvLoadOptions(params, configuredProxy, configuredYtdlPath, lavfiComplex, isRtspTcp(rawPath));
+    }
+
+    private static String mpvLoadOptions(String[] params, String configuredProxy, String configuredYtdlPath, String lavfiComplex,
+                                         boolean rtspTcp) {
         String[] safeParams = params == null ? new String[0] : params;
 
         ArrayList<String> options = new ArrayList<>(safeParams.length + 1);
@@ -49,16 +65,24 @@ public final class VideoParams {
                 if (param.vlcStyle || param.value == null) continue;
                 mpvKey = param.key;
             }
+            if (rtspTcp && "rtsp-transport".equals(mpvKey)) {
+                if (optionKeys.add(mpvKey)) options.add("rtsp-transport=" + mpvSubValue("tcp"));
+                continue;
+            }
             optionKeys.add(mpvKey);
             options.add(mpvKey + "=" + mpvSubValue(param.value));
         }
+        if (rtspTcp && optionKeys.add("rtsp-transport")) {
+            options.add("rtsp-transport=" + mpvSubValue("tcp"));
+        }
         String proxy = youtube ? normalizeHttpProxy(configuredProxy) : "";
+        String ytdlProxy = proxyWithoutCredentials(proxy);
         if (!proxy.isBlank()) {
             if (!optionKeys.contains("http-proxy")) {
                 options.add("http-proxy=" + mpvSubValue(proxy));
             }
-            if (!optionKeys.contains("ytdl-raw-options")) {
-                options.add("ytdl-raw-options=" + mpvSubValue("proxy=[" + proxy + "]"));
+            if (!ytdlProxy.isBlank() && !optionKeys.contains("ytdl-raw-options")) {
+                options.add("ytdl-raw-options=" + mpvSubValue("proxy=[" + ytdlProxy + "]"));
             }
         }
         String ytdlPath = youtube ? normalizeMpvOptionValue(configuredYtdlPath) : "";
@@ -120,6 +144,17 @@ public final class VideoParams {
         return false;
     }
 
+    public static boolean hasDisallowedMediaUrls(String[] params) {
+        if (params == null || params.length == 0) return false;
+        for (String raw : params) {
+            ParsedParam param = parse(raw);
+            if (param == null) continue;
+            if (!"audio-file".equals(param.key) && !"input-slave".equals(param.key)) continue;
+            if (param.value == null || !MediaAddressPolicy.isAllowed(param.value)) return true;
+        }
+        return false;
+    }
+
     public static boolean looksAudioOnlyPath(String raw) {
         String path = uriPath(raw);
         if (path.isBlank()) return false;
@@ -177,7 +212,21 @@ public final class VideoParams {
             int port = uri.getPort();
             if (port > 65535) return "";
             return normalized;
-        } catch (RuntimeException e) {
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    static String proxyWithoutCredentials(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        if (value.isBlank()) return "";
+        try {
+            URI uri = URI.create(value);
+            String scheme = uri.getScheme();
+            String host = uri.getHost();
+            if (scheme == null || host == null || host.isBlank()) return "";
+            return new URI(scheme, null, host, uri.getPort(), null, null, null).toString();
+        } catch (Exception e) {
             return "";
         }
     }
@@ -189,13 +238,26 @@ public final class VideoParams {
     }
 
     public static String[] vlcOptions(String[] params) {
-        if (params == null || params.length == 0) return new String[0];
+        return vlcOptions(null, params);
+    }
 
-        ArrayList<String> options = new ArrayList<>(params.length);
-        for (String raw : params) {
+    public static String[] vlcOptions(String rawPath, String[] params) {
+        return vlcOptions(rawPath, params, "");
+    }
+
+    public static String[] vlcOptions(String rawPath, String[] params, String configuredProxy) {
+        String[] safeParams = params == null ? new String[0] : params;
+        ArrayList<String> options = new ArrayList<>(safeParams.length + 1);
+        boolean hasRtspTcp = false;
+        boolean youtube = false;
+        for (String raw : safeParams) {
             ParsedParam param = parse(raw);
             if (param == null || param.key.isEmpty()) continue;
-            if (isInternal(param.key)) continue;
+            if (isInternal(param.key)) {
+                if (PARAM_YOUTUBE.equals(param.key)) youtube = truthy(param.value);
+                continue;
+            }
+            if ("rtsp-tcp".equals(param.key)) hasRtspTcp = true;
             if (param.vlcStyle) {
                 options.add(raw.trim());
                 continue;
@@ -207,7 +269,22 @@ public final class VideoParams {
                 }
             }
         }
+        if (isRtspTcp(rawPath) && !hasRtspTcp) options.add(":rtsp-tcp");
+        String proxy = youtube ? normalizeHttpProxy(configuredProxy) : "";
+        if (!proxy.isBlank()) options.add(":http-proxy=" + proxy);
         return options.toArray(String[]::new);
+    }
+
+    public static boolean isRtspTcp(String rawPath) {
+        String value = rawPath == null ? "" : rawPath.trim();
+        return value.regionMatches(true, 0, "rtsps://", 0, "rtsps://".length())
+                || value.regionMatches(true, 0, "rtspt://", 0, "rtspt://".length());
+    }
+
+    public static String normalizeStreamPath(String rawPath) {
+        String trimmed = rawPath == null ? "" : rawPath.trim();
+        if (!trimmed.regionMatches(true, 0, "rtspt://", 0, "rtspt://".length())) return trimmed;
+        return "rtsp://" + trimmed.substring("rtspt://".length());
     }
 
     private static String mpvKey(String key) {

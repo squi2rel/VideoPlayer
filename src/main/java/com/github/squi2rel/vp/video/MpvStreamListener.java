@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.VideoPlayerMain;
+import com.github.squi2rel.vp.provider.MediaAddressPolicy;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
@@ -43,10 +44,26 @@ final class MpvStreamListener implements IVideoListener {
         try {
             ctx = lib.mpv_create();
             if (ctx == null) throw new IllegalStateException("mpv_create returned null");
+            setOptionString(lib, ctx, "config", "no");
+            setOptionString(lib, ctx, "terminal", "no");
+            setOptionString(lib, ctx, "vid", "no");
+            setOptionString(lib, ctx, "ao", "null");
+            setOptionString(lib, ctx, "mute", "yes");
+            int result = lib.mpv_initialize(ctx);
+            if (result < 0) {
+                throw new IllegalStateException("mpv_initialize failed: " + lib.mpv_error_string(result));
+            }
         } finally {
             if (ctx != null) {
                 lib.mpv_terminate_destroy(ctx);
             }
+        }
+    }
+
+    private static void setOptionString(LibMpv lib, Pointer ctx, String name, String value) {
+        int result = lib.mpv_set_option_string(ctx, name, value);
+        if (result < 0) {
+            throw new IllegalStateException("mpv_set_option_string " + name + " failed: " + lib.mpv_error_string(result));
         }
     }
 
@@ -124,14 +141,19 @@ final class MpvStreamListener implements IVideoListener {
             ctx = lib.mpv_create();
             if (ctx == null) throw new IllegalStateException("mpv_create returned null");
             handle = ctx;
+            if (info == null || info.path().isBlank() || !MediaAddressPolicy.isAllowed(info.path())
+                    || VideoParams.hasDisallowedMediaUrls(info.params())) {
+                throw new IllegalArgumentException("Media address is not allowed");
+            }
             setOptionString(ctx, "config", "no");
             setOptionString(ctx, "terminal", "no");
             setOptionString(ctx, "vid", "no");
             setOptionString(ctx, "ao", "null");
             setOptionString(ctx, "mute", "yes");
             check(ctx, lib.mpv_initialize(ctx), "mpv_initialize");
-            loadFile(ctx, info.path().replace("rtspt://", "rtsp://"),
-                    VideoParams.mpvLoadOptions(info.params(), StreamListener.configuredProxy(), StreamListener.configuredYtdlPath()));
+            loadFile(ctx, VideoParams.normalizeStreamPath(info.path()),
+                    VideoParams.mpvLoadOptionsForPath(info.path(), info.params(), StreamListener.configuredProxy(),
+                            StreamListener.configuredYtdlPath()));
 
             long deadline = System.currentTimeMillis() + TIMEOUT_MS;
             long lastPoll = 0;

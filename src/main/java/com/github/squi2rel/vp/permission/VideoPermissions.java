@@ -3,20 +3,31 @@ package com.github.squi2rel.vp.permission;
 import net.minecraft.command.DefaultPermissions;
 import net.minecraft.server.network.ServerPlayerEntity;
 
+import java.util.EnumSet;
 import java.util.Objects;
+import java.util.Set;
 
 public final class VideoPermissions {
-    private static final GlobalPermissionChecker ALLOW_GLOBAL = (player, action, context) -> true;
+    private static final Set<VideoPermissionAction> PUBLIC_ACTIONS = EnumSet.of(
+            VideoPermissionAction.PLAY,
+            VideoPermissionAction.SEEK,
+            VideoPermissionAction.SYNC,
+            VideoPermissionAction.VOTE_SKIP,
+            VideoPermissionAction.AUTO_SYNC,
+            VideoPermissionAction.OPEN_MENU
+    );
+    private static final GlobalPermissionChecker DEFAULT_GLOBAL = (player, action, context) ->
+            player.opOrGameMaster() || PUBLIC_ACTIONS.contains(action);
     private static final AreaPermissionChecker ALLOW_AREA = (player, action, context) -> true;
 
-    private static volatile GlobalPermissionChecker globalChecker = ALLOW_GLOBAL;
+    private static volatile GlobalPermissionChecker globalChecker = DEFAULT_GLOBAL;
     private static volatile AreaPermissionChecker areaChecker = ALLOW_AREA;
 
     private VideoPermissions() {
     }
 
     public static void setGlobalChecker(GlobalPermissionChecker checker) {
-        globalChecker = Objects.requireNonNullElse(checker, ALLOW_GLOBAL);
+        globalChecker = Objects.requireNonNullElse(checker, DEFAULT_GLOBAL);
     }
 
     public static void setAreaChecker(AreaPermissionChecker checker) {
@@ -24,7 +35,7 @@ public final class VideoPermissions {
     }
 
     public static void reset() {
-        globalChecker = ALLOW_GLOBAL;
+        globalChecker = DEFAULT_GLOBAL;
         areaChecker = ALLOW_AREA;
     }
 

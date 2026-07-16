@@ -59,6 +59,7 @@ public class PBOManager {
     }
 
     public void init(int width, int height) {
+        int nextBufferSize = VideoFrameLimits.rgbaBytes(width, height);
         lock.lock();
         try {
             int prevPBO = glGetInteger(GL_PIXEL_UNPACK_BUFFER_BINDING);
@@ -67,7 +68,7 @@ public class PBOManager {
             }
             glGenBuffers(id);
             allocated = true;
-            bufferSize = width * height * 4;
+            bufferSize = nextBufferSize;
             persistent = supportsPersistentMapping() && initPersistent();
             if (!persistent) {
                 initStreaming();

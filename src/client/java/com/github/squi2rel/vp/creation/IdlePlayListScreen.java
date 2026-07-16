@@ -17,7 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-public class IdlePlayListScreen extends Screen {
+public class IdlePlayListScreen extends Screen implements ServerStateScreen {
     private static final int GAP = 8;
     private static final int CONTROL_HEIGHT = 18;
     private static final int ROW_HEIGHT = 20;
@@ -33,6 +33,10 @@ public class IdlePlayListScreen extends Screen {
     private int listBottom;
     private int listX;
     private int listW;
+    private boolean requestPending;
+    private VpButtonWidget addButton;
+    private VpButtonWidget modeButton;
+    private VpButtonWidget clearButton;
 
     public IdlePlayListScreen(Screen parent, ClientVideoScreen screen) {
         this(parent, screen, "", 0);
@@ -56,23 +60,18 @@ public class IdlePlayListScreen extends Screen {
         int addW = 64;
         int urlW = Math.max(80, contentW - addW - GAP);
         urlField = new VpTextFieldWidget(textRenderer, x, row, urlW, CONTROL_HEIGHT, Text.empty(), THEME);
-        urlField.setMaxLength(VideoScreen.MAX_IDLE_PLAY_URL_LENGTH);
+        urlField.setMaxLength(VideoScreen.MAX_IDLE_PLAY_URL_BYTES);
+        urlField.setTextPredicate(VideoScreen::validIdlePlayUrlInput);
         urlField.setText(urlDraft);
         addDrawableChild(urlField);
-        VpButtonWidget add = button(VpTexts.tr("button.videoplayer.add", "Add"), x + urlW + GAP, row, addW, this::addIdlePlayUrl);
-        add.active = canEditIdlePlay();
+        addButton = button(VpTexts.tr("button.videoplayer.add", "Add"), x + urlW + GAP, row, addW, this::addIdlePlayUrl);
 
         row += 28;
         int modeW = Math.max(80, (contentW - GAP) / 2);
-        VpButtonWidget mode = button(VpTexts.tr("label.videoplayer.mode_value", "Mode: %s",
-                        (screen == null || !screen.idlePlayRandom
-                                ? VpTexts.tr("label.videoplayer.sequential", "Sequential")
-                                : VpTexts.tr("label.videoplayer.random", "Random")).getString()),
-                x, row, modeW, this::toggleIdlePlayMode)
+        modeButton = button(idlePlayModeText(), x, row, modeW, this::toggleIdlePlayMode)
                 .selected(screen != null && screen.idlePlayRandom);
-        mode.active = canEditIdlePlay();
-        VpButtonWidget clear = button(VpTexts.tr("button.videoplayer.clear", "Clear"), x + modeW + GAP, row, modeW, this::clearIdlePlay).danger(true);
-        clear.active = canEditIdlePlay() && !screen.idlePlayUrls.isEmpty();
+        clearButton = button(VpTexts.tr("button.videoplayer.clear", "Clear"), x + modeW + GAP, row, modeW, this::clearIdlePlay).danger(true);
+        refreshControls();
 
         int closeW = 72;
         button(VpTexts.tr("button.videoplayer.close", "Close"), x + Math.max(0, contentW - closeW), Math.max(108, height - 40), closeW, this::close);
@@ -110,6 +109,7 @@ public class IdlePlayListScreen extends Screen {
         drawLabel(context, VpTexts.tr("label.videoplayer.play_mode", "Play Mode"), listX, 82 - LABEL_OFFSET, THEME.secondaryTextColor());
         drawLabel(context, VpTexts.tr("label.videoplayer.idle_play_list", "Idle Play List"), listX, listTop - LABEL_OFFSET, THEME.secondaryTextColor());
 
+        refreshControls();
         super.render(context, mouseX, mouseY, delta);
         drawIdleList(context, mouseX, mouseY);
         drawScrollbar(context);
@@ -244,12 +244,20 @@ public class IdlePlayListScreen extends Screen {
             sendLocalError(VpTexts.tr("error.videoplayer.idle_play_url_empty", "IdlePlay URL must not be empty"));
             return;
         }
+        if (!VideoScreen.validIdlePlayUrl(url)) {
+            sendLocalError(VpTexts.tr("error.videoplayer.idle_play_url_too_long", "IdlePlay URL must not exceed %s UTF-8 bytes", VideoScreen.MAX_IDLE_PLAY_URL_BYTES));
+            return;
+        }
         if (screen.idlePlayUrls.size() >= VideoScreen.MAX_IDLE_PLAY_ITEMS) {
             sendLocalError(VpTexts.tr("error.videoplayer.idle_play_too_many", "IdlePlay can contain at most %s entries", VideoScreen.MAX_IDLE_PLAY_ITEMS));
             return;
         }
         ArrayList<String> urls = new ArrayList<>(screen.idlePlayUrls);
         urls.add(url);
+        if (!VideoScreen.validIdlePlayConfig(urls)) {
+            sendLocalError(VpTexts.tr("error.videoplayer.idle_play_payload_too_large", "IdlePlay URLs must not exceed %s UTF-8 bytes in total", VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES));
+            return;
+        }
         urlDraft = "";
         urlField.setText("");
         sendIdlePlayConfig(urls, screen.idlePlayRandom, button);
@@ -273,15 +281,38 @@ public class IdlePlayListScreen extends Screen {
     }
 
     private void sendIdlePlayConfig(List<String> urls, boolean random, VpButtonWidget button) {
-        if (screen == null) return;
+        if (screen == null || requestPending || !canEditIdlePlay()) return;
         String currentUrl = urlField == null ? urlDraft : urlField.getText();
+        urlDraft = currentUrl;
+        requestPending = true;
+        refreshControls();
         ClientPacketHandler.setIdlePlay(screen, urls, random, result -> {
+            requestPending = false;
             if (ClientPacketHandler.denied(result) && button != null) button.showPermissionDenied();
+            if (client != null && client.currentScreen == this) {
+                listScroll = Math.clamp(listScroll, 0, maxListScroll());
+                clearAndInit();
+            }
         });
-        listScroll = Math.clamp(listScroll, 0, maxListScroll());
-        if (client != null) {
-            client.setScreen(new IdlePlayListScreen(parent, screen, currentUrl, listScroll));
+    }
+
+    private void refreshControls() {
+        boolean editable = canEditIdlePlay();
+        if (urlField != null) urlField.active = editable;
+        if (addButton != null) addButton.active = editable;
+        if (modeButton != null) {
+            modeButton.active = editable;
+            modeButton.setMessage(idlePlayModeText());
+            modeButton.selected(screen != null && screen.idlePlayRandom);
         }
+        if (clearButton != null) clearButton.active = editable && screen != null && !screen.idlePlayUrls.isEmpty();
+    }
+
+    private Text idlePlayModeText() {
+        Text mode = screen == null || !screen.idlePlayRandom
+                ? VpTexts.tr("label.videoplayer.sequential", "Sequential")
+                : VpTexts.tr("label.videoplayer.random", "Random");
+        return VpTexts.tr("label.videoplayer.mode_value", "Mode: %s", mode.getString());
     }
 
     private void sendLocalError(Text message) {
@@ -315,7 +346,11 @@ public class IdlePlayListScreen extends Screen {
     }
 
     private boolean canEditIdlePlay() {
-        return screen != null && ClientPermissionCache.allowedOrUnknown(VideoPermissionAction.SET_IDLE_PLAY, screen);
+        return screen != null
+                && !requestPending
+                && screen.area != null
+                && screen.area.getScreen(screen.name) == screen
+                && ClientPermissionCache.allowedOrUnknown(VideoPermissionAction.SET_IDLE_PLAY, screen);
     }
 
     private void drawLabel(DrawContext context, String label, int x, int y, int color) {

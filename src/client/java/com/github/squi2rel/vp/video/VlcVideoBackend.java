@@ -1,7 +1,6 @@
 package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.provider.VideoInfo;
-import net.minecraft.client.MinecraftClient;
 
 import java.util.function.BiConsumer;
 
@@ -9,8 +8,9 @@ public class VlcVideoBackend implements VideoBackend {
     private final BiConsumer<Integer, Integer> sizeListener;
     private VlcDecoder decoder;
     private VideoQuad quad;
-    private volatile boolean changed;
     private volatile boolean videoFrameAvailable;
+    private int width = 1;
+    private int height = 1;
 
     public VlcVideoBackend(BiConsumer<Integer, Integer> sizeListener) {
         this.sizeListener = sizeListener;
@@ -24,27 +24,14 @@ public class VlcVideoBackend implements VideoBackend {
     @Override
     public void init() {
         decoder = new VlcDecoder();
-        decoder.onSizeChanged((w, h) -> {
-            changed = true;
-            videoFrameAvailable = w > 1 && h > 1;
-            MinecraftClient.getInstance().execute(() -> {
-                sizeListener.accept(w, h);
-                quad.resize(w, h);
-                changed = false;
-            });
-        });
-        decoder.onFinish(() -> {
-            videoFrameAvailable = false;
-            MinecraftClient.getInstance().execute(() -> quad.resize(1, 1));
-        });
-
         quad = new VideoQuad(decoder.getWidth(), decoder.getHeight());
-        sizeListener.accept(decoder.getWidth(), decoder.getHeight());
+        width = decoder.getWidth();
+        height = decoder.getHeight();
+        sizeListener.accept(width, height);
     }
 
     @Override
     public void play(VideoInfo info, long targetTime, int volume) {
-        videoFrameAvailable = false;
         if (targetTime > 0) {
             String[] params = info.params() == null ? new String[0] : info.params();
             String[] newParams = new String[params.length + 1];
@@ -58,11 +45,17 @@ public class VlcVideoBackend implements VideoBackend {
 
     @Override
     public void updateTexture() {
-        if (changed) return;
         VlcDecoder.DecodedFrame frame = decoder.decodeNextFrame();
         if (frame == null) return;
         try {
+            if (frame.width() != width || frame.height() != height) {
+                width = frame.width();
+                height = frame.height();
+                quad.resize(width, height);
+                sizeListener.accept(width, height);
+            }
             quad.updateBgraTexture(frame.buffer());
+            videoFrameAvailable = width > 1 && height > 1;
         } finally {
             frame.close();
         }
@@ -80,12 +73,12 @@ public class VlcVideoBackend implements VideoBackend {
 
     @Override
     public int getWidth() {
-        return decoder == null ? 1 : decoder.getWidth();
+        return width;
     }
 
     @Override
     public int getHeight() {
-        return decoder == null ? 1 : decoder.getHeight();
+        return height;
     }
 
     @Override

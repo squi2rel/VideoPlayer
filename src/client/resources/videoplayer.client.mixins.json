@@ -6,7 +6,11 @@
     "ClientPlayNetworkHandlerMixin",
     "DrawContextAccessor",
     "GameRendererAccessor",
+    "GameRendererMixin",
+    "MinecraftClientAccessor",
     "MinecraftClientMixin",
+    "VoxyThreadUtilsMixin",
+    "WindowMixin",
     "WorldRendererMixin"
   ],
   "injectors": {

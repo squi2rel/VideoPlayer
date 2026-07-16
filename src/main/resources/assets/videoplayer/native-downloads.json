@@ -7,24 +7,6 @@
           "sha256": "dbae70c264a9d86cd8d7fbd7ca35388cbe973de03636c08f0ac8d7cdb493f9ec"
         }
       ],
-      "android_armeabi-v7a": [
-        {
-          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-armeabi-v7a.zip",
-          "sha256": "9ce30b6e7940330ba3c18e80d1547a6997f772c2b44803ac9a7829f05f2d5fcf"
-        }
-      ],
-      "android_x86": [
-        {
-          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-x86.zip",
-          "sha256": "8d4bb859e4102a9fd29f636918a69fa11111b0d64d188e39ef5dd11f96571f33"
-        }
-      ],
-      "android_x86_64": [
-        {
-          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-x86_64.zip",
-          "sha256": "c7ee67b1f851e97bb2b76aa59b39a250e30d55c6d560716923952109f9b6a9cf"
-        }
-      ],
       "linux_arm64": [
         {
           "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-linux-arm64.zip",
@@ -69,30 +51,6 @@
       ]
     },
     "mpv": {
-      "android_arm64-v8a": [
-        {
-          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-android-arm64-v8a.zip",
-          "sha256": "2b490795f56d3b9099c57da799d38709220f417740db760e74c3d8bc32a9849a"
-        }
-      ],
-      "android_armeabi-v7a": [
-        {
-          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-android-armeabi-v7a.zip",
-          "sha256": "735fb9856dac1f7aa42fc79146223a0d06d78dfc984fdbf833045628dcc0b316"
-        }
-      ],
-      "android_x86": [
-        {
-          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-android-x86.zip",
-          "sha256": "9384fec85382994c21853626dec881d83695b311cbe67507a340ed11a80c2c01"
-        }
-      ],
-      "android_x86_64": [
-        {
-          "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-android-x86_64.zip",
-          "sha256": "dc1b5d44ad4c5f4e9bfb4e7ddd289505c000b835392c24fb9494882d3b8e7a78"
-        }
-      ],
       "linux_arm32": [
         {
           "url": "https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-linux-arm32.zip",
@@ -147,6 +105,55 @@
           "sha256": "21f2e086dc9328b6888b38fc3ef7583567ac1b1d99e7d7d716f1ac904ab722a1"
         }
       ]
+    }
+  },
+  "tools": {
+    "yt-dlp": {
+      "version": "2026.07.04",
+      "platforms": {
+        "windows_x64": [
+          {
+            "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp.exe",
+            "sha256": "52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8"
+          }
+        ],
+        "windows_x86": [
+          {
+            "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_x86.exe",
+            "sha256": "cac3a9359367ea819289afe4c59f3e432865dafb6b08c938e2c22b4534898f12"
+          }
+        ],
+        "windows_arm64": [
+          {
+            "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_arm64.exe",
+            "sha256": "1525690b037ecc0bb677e38e7147b0025179cbc9a8d0c57264e3100b18099280"
+          }
+        ],
+        "linux_x64": [
+          {
+            "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_linux",
+            "sha256": "6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae"
+          }
+        ],
+        "linux_arm64": [
+          {
+            "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_linux_aarch64",
+            "sha256": "b6ce97646773070d7a7ffd6bbbdcaecb47c48483909c54c915bf08a7a9b5e0b1"
+          }
+        ],
+        "macos_x64": [
+          {
+            "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_macos",
+            "sha256": "498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b"
+          }
+        ],
+        "macos_arm64": [
+          {
+            "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_macos",
+            "sha256": "498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b"
+          }
+        ]
+      }
     }
   }
 }

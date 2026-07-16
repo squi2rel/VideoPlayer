@@ -14,6 +14,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 public class BiliTicket {
+    private static final int MAX_RESPONSE_BYTES = 1 * 1024 * 1024;
     /**
      * Convert a byte array to a hex string.
      *
@@ -65,12 +66,19 @@ public class BiliTicket {
         String hexSign = hmacSha256("XgwSnGZ1p", "ts" + ts);
         HttpURLConnection conn = getHttpURLConnection(csrf, hexSign, ts);
         InputStream in = conn.getInputStream();
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        int b;
-        while ((b = in.read()) != -1) {
-            out.write(b);
+        try (InputStream input = in) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[8192];
+            int total = 0;
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                if (read == 0) continue;
+                if (total > MAX_RESPONSE_BYTES - read) throw new IOException("Bilibili ticket response is too large");
+                out.write(buffer, 0, read);
+                total += read;
+            }
+            return out.toString(StandardCharsets.UTF_8);
         }
-        return out.toString(StandardCharsets.UTF_8);
     }
 
     private static @NotNull HttpURLConnection getHttpURLConnection(String csrf, String hexSign, long ts) throws IOException, URISyntaxException {
@@ -82,6 +90,8 @@ public class BiliTicket {
         // request
         HttpURLConnection conn = (HttpURLConnection) new URI(url).toURL().openConnection();
         conn.setRequestMethod("POST");
+        conn.setConnectTimeout(15_000);
+        conn.setReadTimeout(15_000);
         conn.addRequestProperty("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0");
         return conn;
     }
