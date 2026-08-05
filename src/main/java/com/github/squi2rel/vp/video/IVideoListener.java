@@ -18,6 +18,14 @@ public interface IVideoListener {
 
     void timeout(Runnable timeout);
 
+    default AudioLevelSnapshot audioLevel() {
+        return AudioLevelSnapshot.unsupported();
+    }
+
+    default VideoColorSnapshot videoColor() {
+        return VideoColorSnapshot.unsupported();
+    }
+
     void listen();
 
     void cancel();

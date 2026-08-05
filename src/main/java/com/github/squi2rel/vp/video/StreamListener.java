@@ -19,7 +19,11 @@ public class StreamListener implements IVideoListener {
     private final IVideoListener delegate;
 
     public StreamListener(VideoInfo info) {
-        this.delegate = create(info);
+        this(info, false);
+    }
+
+    public StreamListener(VideoInfo info, boolean telemetry) {
+        this.delegate = create(info, telemetry);
     }
 
     public static boolean accept(VideoInfo info) {
@@ -136,23 +140,32 @@ public class StreamListener implements IVideoListener {
         return false;
     }
 
-    private static IVideoListener create(VideoInfo info) {
+    private static IVideoListener create(VideoInfo info, boolean telemetry) {
         load();
+        if (telemetry) {
+            if (!mpvAvailable && mpvError == null) loadBackend(NativePackageManager.BACKEND_MPV, false);
+        }
         String first = VideoPlayerMain.android
                 ? NativePackageManager.BACKEND_VLC
                 : NativeDownloadConfig.normalizeBackend(preferredBackend);
-        if (NativePackageManager.BACKEND_MPV.equals(first)) {
-            if (mpvAvailable) return new MpvStreamListener(info);
-            if (vlcAvailable) return new VlcStreamListener(info);
-        } else {
-            if (vlcAvailable) return new VlcStreamListener(info);
-            if (mpvAvailable) return new MpvStreamListener(info);
-        }
+        String selected = selectBackend(telemetry, first, mpvAvailable, vlcAvailable);
+        if (NativePackageManager.BACKEND_MPV.equals(selected)) return new MpvStreamListener(info, telemetry);
+        if (NativePackageManager.BACKEND_VLC.equals(selected)) return new VlcStreamListener(info);
 
         IllegalStateException error = new IllegalStateException("Stream listener backend is not loaded");
         if (mpvError != null) error.addSuppressed(mpvError);
         if (vlcError != null) error.addSuppressed(vlcError);
         throw error;
+    }
+
+    static String selectBackend(boolean telemetry, String preferred, boolean mpv, boolean vlc) {
+        if (telemetry && mpv) return NativePackageManager.BACKEND_MPV;
+        if (NativePackageManager.BACKEND_MPV.equals(preferred)) {
+            if (mpv) return NativePackageManager.BACKEND_MPV;
+            return vlc ? NativePackageManager.BACKEND_VLC : null;
+        }
+        if (vlc) return NativePackageManager.BACKEND_VLC;
+        return mpv ? NativePackageManager.BACKEND_MPV : null;
     }
 
     @Override
@@ -188,6 +201,16 @@ public class StreamListener implements IVideoListener {
     @Override
     public void timeout(Runnable timeout) {
         delegate.timeout(timeout);
+    }
+
+    @Override
+    public AudioLevelSnapshot audioLevel() {
+        return delegate.audioLevel();
+    }
+
+    @Override
+    public VideoColorSnapshot videoColor() {
+        return delegate.videoColor();
     }
 
     @Override

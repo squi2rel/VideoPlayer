@@ -66,7 +66,7 @@ public class PlaybackController {
                 broadcaster,
                 PlaybackController::resolveQueuedInfo,
                 PlaybackController::resolveIdle,
-                VideoListeners::from,
+                info -> VideoListeners.from(screen, info),
                 CompletableFuture.delayedExecutor(0, TimeUnit.MILLISECONDS),
                 stateExecutor(screen),
                 delayedExecutor(screen),
