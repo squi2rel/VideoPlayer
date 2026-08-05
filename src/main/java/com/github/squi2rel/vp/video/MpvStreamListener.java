@@ -31,6 +31,8 @@ final class MpvStreamListener implements IVideoListener {
     private static final String COLOR_METER_FILTER = "@" + COLOR_METER_LABEL
             + ":lavfi=[fps=10,scale=32:18:flags=area,format=pix_fmts=yuv444p,signalstats]";
     private static final Set<MpvStreamListener> ACTIVE = ConcurrentHashMap.newKeySet();
+    private static final MpvTelemetryPermitPool TELEMETRY_PERMITS = new MpvTelemetryPermitPool(32);
+    private static final long SHUTDOWN_MONITOR_MS = 5_000L;
 
     private final LibMpv lib;
     private final VideoInfo info;
@@ -40,7 +42,9 @@ final class MpvStreamListener implements IVideoListener {
     private final AtomicBoolean released = new AtomicBoolean(false);
     private final AtomicBoolean finished = new AtomicBoolean(false);
     private final AtomicBoolean started = new AtomicBoolean(false);
+    private final AtomicBoolean telemetryPermit = new AtomicBoolean(false);
     private final MpvProgressClock progressClock = new MpvProgressClock();
+    private final MpvPendingSeek pendingSeek = new MpvPendingSeek();
     private final Object commandLock = new Object();
 
     private Thread thread;
@@ -86,9 +90,20 @@ final class MpvStreamListener implements IVideoListener {
     }
 
     static void shutdown() {
-        for (MpvStreamListener listener : List.copyOf(ACTIVE)) {
-            listener.cancel();
-        }
+        List<MpvStreamListener> listeners = List.copyOf(ACTIVE);
+        for (MpvStreamListener listener : listeners) listener.cancel();
+        ListenerShutdownMonitor.start(
+                "VideoPlayer-MPV-shutdown-monitor",
+                listeners,
+                ACTIVE::contains,
+                SHUTDOWN_MONITOR_MS,
+                () -> {
+                },
+                remaining -> VideoPlayerMain.LOGGER.warn(
+                        "{} MPV stream listener(s) did not exit within {} ms",
+                        remaining, SHUTDOWN_MONITOR_MS
+                )
+        );
     }
 
     private static void setOptionString(LibMpv lib, Pointer ctx, String name, String value) {
@@ -106,15 +121,17 @@ final class MpvStreamListener implements IVideoListener {
 
     @Override
     public void setProgress(long progress) {
+        long target = Math.max(0, progress);
+        pendingSeek.request(target);
+        progressClock.seekTo(target);
         Pointer ctx = handle;
         if (ctx == null || finished.get()) return;
-        long target = Math.max(0, progress);
-        progressClock.seekTo(target);
         synchronized (commandLock) {
             ctx = handle;
             if (ctx == null || finished.get()) return;
             try {
                 command(ctx, "seek", String.format(Locale.ROOT, "%.3f", target / 1000.0), "absolute", "exact");
+                pendingSeek.clearIf(target);
             } catch (RuntimeException e) {
                 VideoPlayerMain.LOGGER.warn("Failed to seek MPV stream listener", e);
             }
@@ -157,16 +174,31 @@ final class MpvStreamListener implements IVideoListener {
     }
 
     @Override
-    public void listen() {
-        released.set(false);
-        finished.set(false);
-        started.set(false);
-        progressClock.reset(false);
-        resetTelemetry();
-        ACTIVE.add(this);
-        thread = new Thread(this::run, "VideoPlayer-MPV-stream");
-        thread.setDaemon(true);
-        thread.start();
+    public synchronized void listen() {
+        if (telemetry) {
+            if (!telemetryPermit.compareAndSet(false, true)) {
+                throw new IllegalStateException("MPV telemetry listener is already active");
+            }
+            if (!TELEMETRY_PERMITS.acquire()) {
+                telemetryPermit.set(false);
+                throw new IllegalStateException("MPV telemetry listener limit exceeded");
+            }
+        }
+        try {
+            released.set(false);
+            finished.set(false);
+            started.set(false);
+            progressClock.reset(false);
+            resetTelemetry();
+            ACTIVE.add(this);
+            thread = new Thread(this::run, "VideoPlayer-MPV-stream");
+            thread.setDaemon(true);
+            thread.start();
+        } catch (RuntimeException | Error error) {
+            ACTIVE.remove(this);
+            releaseTelemetryPermit();
+            throw error;
+        }
     }
 
     @Override
@@ -238,7 +270,12 @@ final class MpvStreamListener implements IVideoListener {
                 }
             }
             ACTIVE.remove(this);
+            releaseTelemetryPermit();
         }
+    }
+
+    private void releaseTelemetryPermit() {
+        if (telemetryPermit.compareAndSet(true, false)) TELEMETRY_PERMITS.release();
     }
 
     private void handleEvent(Pointer ctx, MpvEvent event) {
@@ -247,6 +284,11 @@ final class MpvStreamListener implements IVideoListener {
             }
             case MPV_EVENT_FILE_LOADED -> {
                 started.set(true);
+                long target = pendingSeek.consume();
+                if (target >= 0L) {
+                    command(ctx, "seek", String.format(Locale.ROOT, "%.3f", target / 1000.0), "absolute", "exact");
+                    progressClock.seekTo(target);
+                }
                 refreshProperties(ctx);
                 playing.accept(Boolean.TRUE.equals(getFlag(ctx, "seekable")));
             }

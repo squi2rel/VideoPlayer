@@ -41,6 +41,7 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
     public void onEnable() {
         active = true;
         FoliaScheduler.initialize(this);
+        DisplayCleanupService.initialize(this);
         long epoch = lifecycleEpoch.incrementAndGet();
         VideoPlayerMain.version = getPluginMeta().getVersion();
         System.setProperty("videoplayer.version", VideoPlayerMain.version);
@@ -109,6 +110,7 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
         getServer().getMessenger().unregisterIncomingPluginChannel(this, CHANNEL, this);
         getServer().getMessenger().unregisterOutgoingPluginChannel(this, CHANNEL);
         VideoPlayerMain.scheduler.shutdownNow();
+        DisplayCleanupService.shutdown();
         FoliaScheduler.shutdown(this);
     }
 

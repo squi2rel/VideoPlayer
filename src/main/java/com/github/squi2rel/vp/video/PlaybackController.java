@@ -40,6 +40,7 @@ public class PlaybackController {
     private final DelayedExecutor delayedExecutor;
     private final ScreenLifecycleToken lifecycleToken;
     private final Predicate<UUID> reporterEligibility;
+    private final PlaybackTelemetryRegistry.Binding telemetryBinding;
 
     private IVideoListener listener;
     private CompletableFuture<VideoInfo> nextTask;
@@ -101,6 +102,32 @@ public class PlaybackController {
         this.delayedExecutor = delayedExecutor;
         this.lifecycleToken = lifecycleToken;
         this.reporterEligibility = reporterEligibility == null ? uuid -> false : reporterEligibility;
+        this.telemetryBinding = lifecycleToken == null ? null : PlaybackTelemetryRegistry.bind(
+                ScreenKey.of(screen),
+                requested -> serverExecutor.execute(
+                        () -> applyTelemetryRequest(requested, StreamListener::telemetryProbe)
+                )
+        );
+    }
+
+    void applyTelemetryRequest(boolean requested, Function<VideoInfo, IVideoListener> telemetryFactory) {
+        if (!lifecycleCurrent()) return;
+        IVideoListener current = listener;
+        if (!(current instanceof TelemetryVideoListener telemetry)) return;
+        if (!requested) {
+            telemetry.detachTelemetry();
+            return;
+        }
+        VideoInfo info = currentInfo;
+        if (info == null || telemetryFactory == null) return;
+        IVideoListener probe;
+        try {
+            probe = telemetryFactory.apply(info);
+        } catch (RuntimeException error) {
+            LOGGER.warn("Failed to create playback telemetry probe for screen {}", screen.name, error);
+            return;
+        }
+        if (probe != null) telemetry.attachTelemetry(probe);
     }
 
     public void playNext() {
@@ -478,6 +505,11 @@ public class PlaybackController {
         if (syncPlaylist) {
             broadcaster.syncPlaylist();
         }
+    }
+
+    void close() {
+        if (telemetryBinding != null) telemetryBinding.close();
+        stopAndClear(false);
     }
 
     private void stopCurrent() {

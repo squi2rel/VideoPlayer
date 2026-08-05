@@ -112,6 +112,18 @@ public class StreamListener implements IVideoListener {
         MpvLibrary.resetLoadState();
     }
 
+    static synchronized IVideoListener telemetryProbe(VideoInfo info) {
+        if (!accept(info)) return null;
+        if (!mpvAvailable && mpvError == null) loadBackend(NativePackageManager.BACKEND_MPV, false);
+        if (!mpvAvailable) return null;
+        try {
+            return new MpvStreamListener(info, true);
+        } catch (RuntimeException error) {
+            VideoPlayerMain.LOGGER.warn("Failed to create MPV telemetry probe", error);
+            return null;
+        }
+    }
+
     private static boolean loadBackend(String backend, boolean fallback) {
         if (NativePackageManager.BACKEND_MPV.equals(NativeDownloadConfig.normalizeBackend(backend))) {
             mpvError = MpvLibrary.loadError();

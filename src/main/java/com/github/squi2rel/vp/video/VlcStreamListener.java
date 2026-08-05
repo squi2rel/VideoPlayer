@@ -15,6 +15,7 @@ import java.util.function.Consumer;
 final class VlcStreamListener implements IVideoListener {
     private static final long TIMEOUT_MS = 30_000;
     private static final long LOOP_SLEEP_MS = 50;
+    private static final long SHUTDOWN_MONITOR_MS = 5_000L;
     private static final int[] MEDIA_PLAYER_EVENTS = {
             VlcLibrary.LIBVLC_MEDIA_PLAYER_PLAYING,
             VlcLibrary.LIBVLC_MEDIA_PLAYER_STOPPED,
@@ -106,31 +107,35 @@ final class VlcStreamListener implements IVideoListener {
     }
 
     static void shutdown() {
+        shutdown(VlcStreamListener::releaseInstance);
+    }
+
+    static void shutdown(Consumer<Pointer> releaser) {
         List<VlcStreamListener> listeners;
+        Pointer loadedInstance;
         synchronized (VlcStreamListener.class) {
             shutDown = true;
             listeners = List.copyOf(ACTIVE);
-        }
-        for (VlcStreamListener listener : listeners) {
-            listener.cancel();
-        }
-        for (VlcStreamListener listener : listeners) {
-            Thread running = listener.thread;
-            if (running == null || running == Thread.currentThread()) continue;
-            try {
-                running.join(2_000L);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        Pointer loadedInstance;
-        synchronized (VlcStreamListener.class) {
             loadedInstance = instance;
             instance = null;
             loadError = null;
             loadAttempted = false;
         }
+        for (VlcStreamListener listener : listeners) listener.cancel();
+        ListenerShutdownMonitor.start(
+                "VideoPlayer-VLC-shutdown-monitor",
+                listeners,
+                ACTIVE::contains,
+                SHUTDOWN_MONITOR_MS,
+                () -> releaser.accept(loadedInstance),
+                remaining -> VideoPlayerMain.LOGGER.warn(
+                        "{} VLC stream listener(s) did not exit within {} ms",
+                        remaining, SHUTDOWN_MONITOR_MS
+                )
+        );
+    }
+
+    static void releaseInstance(Pointer loadedInstance) {
         if (loadedInstance != null) {
             try {
                 VlcLibrary.releaseInstance(loadedInstance);

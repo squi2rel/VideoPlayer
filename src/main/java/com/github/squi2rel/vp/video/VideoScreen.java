@@ -556,7 +556,7 @@ public class VideoScreen {
         serverActive = false;
         serverScreenEpoch++;
         if (admissions != null) admissions.close();
-        if (playback != null) playback.stopAndClear(false);
+        if (playback != null) playback.close();
     }
 
     public void playNext() {
