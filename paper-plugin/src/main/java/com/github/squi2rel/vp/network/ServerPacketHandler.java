@@ -797,7 +797,7 @@ public class ServerPacketHandler {
         String detail = NativeDependencyDiagnostics.describe(error);
         String suffix = detail.startsWith("missing native dependencies:") ? " (" + detail + ")" : "";
         return VpTranslation.of("error.videoplayer.native_backend_unavailable_detail",
-                "The server cannot use MPV or VLC playback%s. Ask the server administrator to install or repair a native runtime.", suffix);
+                "The server cannot use MPV playback%s. Ask the server administrator to install or repair a native runtime.", suffix);
     }
 
     static CompletableFuture<VideoInfo> guardNativeRuntime(CompletableFuture<VideoInfo> upstream) {

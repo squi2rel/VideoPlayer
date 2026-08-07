@@ -51,6 +51,13 @@ public class StreamListener implements IVideoListener {
         return false;
     }
 
+    public static synchronized boolean loadMpvOnly() {
+        if (mpvAvailable) return true;
+        if (loadBackend(NativePackageManager.BACKEND_MPV, false)) return true;
+        VideoPlayerMain.LOGGER.warn("MPV stream listener backend is not available", mpvError);
+        return false;
+    }
+
     public static boolean isLoaded() {
         return mpvAvailable || vlcAvailable;
     }

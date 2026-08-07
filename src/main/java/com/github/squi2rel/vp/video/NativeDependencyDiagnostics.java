@@ -54,7 +54,7 @@ public final class NativeDependencyDiagnostics {
         if (detail.isBlank()) return "";
         String normalized = os == null ? "" : os.trim().toLowerCase(Locale.ROOT);
         if (normalized.equals("linux")) {
-            return detail + "; install the host X11/Wayland, audio, and GPU runtime libraries required by libmpv or select VLC";
+            return detail + "; install the host libmpv runtime dependencies; on Ubuntu/Debian Docker use apt-get install --no-install-recommends libmpv2";
         }
         if (normalized.equals("macos")) {
             return detail + "; install the required system frameworks or select VLC";

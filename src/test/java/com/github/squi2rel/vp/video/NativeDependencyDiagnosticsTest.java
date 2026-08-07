@@ -3,6 +3,7 @@ package com.github.squi2rel.vp.video;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class NativeDependencyDiagnosticsTest {
@@ -13,8 +14,11 @@ class NativeDependencyDiagnosticsTest {
                 "/tmp/videoplayer/libmpv.so: libva.so.2: cannot open shared object file: No such file or directory"
         ));
 
+        String recommendation = NativeDependencyDiagnostics.recommendation(root, "linux");
         assertEquals("missing native dependencies: libva.so.2", NativeDependencyDiagnostics.describe(root));
-        assertTrue(NativeDependencyDiagnostics.recommendation(root, "linux").contains("libva.so.2"));
+        assertTrue(recommendation.contains("libva.so.2"));
+        assertTrue(recommendation.contains("apt-get install --no-install-recommends libmpv2"));
+        assertFalse(recommendation.contains("VLC"));
     }
 
     @Test

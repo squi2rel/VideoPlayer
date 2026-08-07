@@ -126,15 +126,16 @@ class PaperNativeRuntimeTest {
     }
 
     @Test
-    void retriesLoadingAfterPreparingVlcFallback() {
+    void failedMpvLoadDoesNotTryAnotherBackend() {
         AtomicReference<Runnable> task = new AtomicReference<>();
-        AtomicBoolean fallbackInstalled = new AtomicBoolean();
         AtomicInteger loads = new AtomicInteger();
 
         PaperNativeRuntime runtime = PaperNativeRuntime.start(
                 active -> {},
-                active -> fallbackInstalled.set(active.getAsBoolean()),
-                () -> loads.incrementAndGet() >= 2,
+                () -> {
+                    loads.incrementAndGet();
+                    return false;
+                },
                 runnable -> {
                     task.set(runnable);
                     return () -> {};
@@ -143,8 +144,7 @@ class PaperNativeRuntimeTest {
 
         task.get().run();
 
-        assertTrue(fallbackInstalled.get());
-        assertEquals(2, loads.get());
-        assertEquals(PaperNativeRuntime.State.READY, runtime.state());
+        assertEquals(1, loads.get());
+        assertEquals(PaperNativeRuntime.State.UNAVAILABLE, runtime.state());
     }
 }

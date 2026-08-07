@@ -1,5 +1,4 @@
-# Native runtime selection for the server-side stream listener.
-# Leave backend empty to use the default backend: mpv.
+# MPV runtime selection for the server-side stream listener.
 #
 # Available backend / os / arch combinations:
 #   mpv / windows / x86
@@ -11,27 +10,17 @@
 #   mpv / linux / x64
 #   mpv / linux / arm32
 #   mpv / linux / arm64
-#   vlc / windows / x86
-#   vlc / windows / x64
-#   vlc / windows / arm64
-#   vlc / macos / x64
-#   vlc / macos / arm64
-#   vlc / linux / arm64
-#   vlc / linux / x64
-#   vlc / android / arm64-v8a
 native:
-  # Options: mpv, vlc. Empty means mpv.
-  backend: ""
+  backend: "mpv"
 
   # Manual platform override. Leave both empty to auto-detect from the server JVM.
-  # os options: windows, macos, linux, android
+  # os options: windows, macos, linux
   os: ""
 
   # arch options depend on os:
   #   windows: x86, x64, arm64
   #   macos: x64, arm64
   #   linux: x86, x64, arm32, arm64
-  #   android: arm64-v8a with the vlc backend only
   arch: ""
 
   # HTTP(S) proxy used for native runtime downloads and stream playback.

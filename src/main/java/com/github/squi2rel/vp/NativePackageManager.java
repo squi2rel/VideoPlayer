@@ -78,13 +78,29 @@ public final class NativePackageManager {
     private static final ConcurrentMap<String, ReentrantLock> INSTALL_LOCKS = new ConcurrentHashMap<>();
     private static final BooleanSupplier ALWAYS_ACTIVE = () -> true;
     private static final long DOWNLOAD_READ_IDLE_TIMEOUT_MILLIS = 30_000L;
-    private static final ExecutorService DOWNLOAD_READ_EXECUTOR = Executors.newCachedThreadPool(task -> {
-        Thread thread = new Thread(task, "VideoPlayer-native-download-read");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private static volatile ExecutorService downloadReadExecutor = createDownloadReadExecutor();
+
+    private static ExecutorService createDownloadReadExecutor() {
+        return Executors.newCachedThreadPool(task -> {
+            Thread thread = new Thread(task, "VideoPlayer-native-download-read");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
 
     private NativePackageManager() {
+    }
+
+    public static synchronized void initialize() {
+        if (downloadReadExecutor.isShutdown()) {
+            downloadReadExecutor = createDownloadReadExecutor();
+        }
+    }
+
+    public static synchronized void shutdown() {
+        downloadReadExecutor.shutdownNow();
+        SELECTED_PLATFORMS.clear();
+        INSTALL_LOCKS.clear();
     }
 
     private static Path configDir() {
@@ -813,7 +829,8 @@ public final class NativePackageManager {
     }
 
     private static int readWithIdleTimeout(InputStream input, byte[] buffer, BooleanSupplier active) throws IOException {
-        Future<Integer> readTask = DOWNLOAD_READ_EXECUTOR.submit(() -> input.read(buffer));
+        checkActive(active);
+        Future<Integer> readTask = downloadReadExecutor.submit(() -> input.read(buffer));
         try {
             long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DOWNLOAD_READ_IDLE_TIMEOUT_MILLIS);
             while (true) {

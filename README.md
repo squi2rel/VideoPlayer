@@ -15,7 +15,7 @@ VideoPlayer 是用于 Minecraft 1.21.11 的 Fabric 视频播放模组，配套�
 
 ## 特性
 
-- VLC 与 MPV 双播放后端，启动向导可检测、安装运行库并配置下载代理。
+- Fabric 客户端提供 VLC 与 MPV 双播放后端；Paper/Folia 服务端直接使用 MPV。
 - 支持直链和网络流，以及哔哩哔哩视频/直播、YouTube、网易云音乐和 MV、实体视角等来源。
 - 支持播放队列、IdlePlay、同步、跳过投票、弹幕、字幕、音频通道和播放诊断。
 - 支持自由顶点屏幕、UV 裁切、缩放、360 球面和可选 Vivecraft VR 集成。
@@ -41,6 +41,20 @@ VideoPlayer 是用于 Minecraft 1.21.11 的 Fabric 视频播放模组，配套�
 5. 使用客户端的创建、管理界面或命令建立区域和屏幕，再将可播放 URL 加入屏幕队列。
 
 请只播放拥有授权或允许公开播放的内容，并遵守视频源及其所在地区的服务条款。
+
+### Paper/Folia Docker
+
+Linux MPV 包含 `libmpv.so`，但仍会从宿主系统解析 X11、Wayland、音频和 GPU 等动态 ABI。精简 Java 镜像只有 JDK，下载和解压成功并不代表 native 库能够加载。Ubuntu 24.04 容器应固定 Noble 基础镜像并安装 `libmpv2` 的运行依赖闭包：
+
+```dockerfile
+FROM eclipse-temurin:25-jdk-noble
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libmpv2 \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+插件仍会根据 `native-downloads.json` 下载并校验版本化 MPV 包；系统的 `libmpv2` 包负责提供它需要的宿主动态依赖。其他 Linux 发行版需要安装对应发行版的 libmpv 运行库。服务端启动成功时应出现 `Using MPV stream listener backend` 和 `VideoPlayer stream listener backend is ready`，缺少依赖时错误会列出具体 `.so` 名称。
 
 ## 常用命令
 

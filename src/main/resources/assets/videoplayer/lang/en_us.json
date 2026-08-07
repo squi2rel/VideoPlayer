@@ -252,7 +252,7 @@
   "error.videoplayer.native.load_failed_after_install": "%s runtime installed but could not be loaded. Restart Minecraft or check the game log.",
   "error.videoplayer.native_backend_initializing": "The server video runtime is still initializing. Try again later.",
   "error.videoplayer.native_backend_unavailable": "The server video runtime is missing, unavailable, or failed to load. Install it and try again.",
-  "error.videoplayer.native_backend_unavailable_detail": "The server cannot use MPV or VLC playback%s. Ask the server administrator to install or repair a native runtime.",
+  "error.videoplayer.native_backend_unavailable_detail": "The server cannot use MPV playback%s. Ask the server administrator to install or repair a native runtime.",
   "error.videoplayer.native.invalid_proxy": "Invalid proxy configuration: %s",
   "error.videoplayer.native.library_missing": "Could not find %s native library in zip",
   "error.videoplayer.native.no_sources": "No download sources configured",

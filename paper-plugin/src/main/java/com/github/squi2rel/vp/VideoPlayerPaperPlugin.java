@@ -48,6 +48,7 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
         VideoPlayerMain.resetScheduler();
         VideoPlayerMain.LOGGER.info("Starting VideoPlayer Paper/Folia plugin {}", VideoPlayerMain.version);
         System.setProperty("videoplayer.configDir", getDataFolder().toPath().toAbsolutePath().toString());
+        NativePackageManager.initialize();
         saveDefaultConfig();
         reloadConfig();
         ClientVersionTracker.initialize(this);
@@ -104,6 +105,7 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
             nativeRuntime.stop();
             nativeRuntime = null;
         }
+        NativePackageManager.shutdown();
         HandlerList.unregisterAll((Listener) this);
         VideoPermissions.reset();
         getServer().getMessenger().unregisterIncomingPluginChannel(this, CHANNEL, this);

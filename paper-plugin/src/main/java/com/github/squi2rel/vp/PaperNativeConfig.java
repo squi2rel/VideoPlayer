@@ -36,17 +36,17 @@ final class PaperNativeConfig {
 
     static PaperNativeConfig load(VideoPlayerPaperPlugin plugin) {
         FileConfiguration config = plugin.getConfig();
-        String backend = backend(config.getString("native.backend", ""));
+        String configuredBackend = backend(config.getString("native.backend", ""));
+        String backend = DEFAULT_BACKEND;
+        if (!DEFAULT_BACKEND.equals(configuredBackend)) {
+            VideoPlayerMain.LOGGER.warn("Paper server playback supports MPV only; ignoring native.backend '{}'", configuredBackend);
+        }
         String platform = platform(config.getString("native.os", ""), config.getString("native.arch", ""));
         if (!NativeDownloadConfig.isSupportedBackendPlatform(backend, platform)) {
-            String configuredBackend = backend;
             String configuredPlatform = platform;
             platform = NativeDownloadConfig.platformKey();
-            backend = "android".equals(NativeDownloadConfig.osFromPlatform(platform))
-                    ? NativeDownloadConfig.BACKEND_VLC
-                    : DEFAULT_BACKEND;
             VideoPlayerMain.LOGGER.warn("Unsupported native backend/platform '{} / {}'; using {} / {}",
-                    configuredBackend, configuredPlatform, backend, platform);
+                    backend, configuredPlatform, backend, platform);
         }
         String proxy = config.getString("native.download-proxy", "");
         String ytdlPath = config.getString("native.mpv-ytdl-path", "");
@@ -65,8 +65,7 @@ final class PaperNativeConfig {
 
     void apply() {
         NativePackageManager.selectPlatform(NativePackageManager.BACKEND_MPV, platform);
-        NativePackageManager.selectPlatform(NativePackageManager.BACKEND_VLC, platform);
-        StreamListener.configurePreferredBackend(backend);
+        StreamListener.configurePreferredBackend(DEFAULT_BACKEND);
         StreamListener.configureProxy(downloadProxy);
         String effectiveYtdlPath = YtDlpManager.effectiveExecutable(mpvYtdlPath);
         StreamListener.configureYtdlPath(effectiveYtdlPath);
@@ -200,31 +199,6 @@ final class PaperNativeConfig {
 
         VideoPlayerMain.LOGGER.warn("Failed to download VideoPlayer native package {} {}; trying system libraries: {}",
                 backend, platform, message(result.message()), result.error());
-    }
-
-    void downloadVlcFallbackIfMissing(BooleanSupplier active) {
-        if (!active.getAsBoolean() || !NativeDownloadConfig.BACKEND_MPV.equals(backend)) return;
-        if (!NativeDownloadConfig.isSupportedBackendPlatform(NativeDownloadConfig.BACKEND_VLC, platform)) return;
-        if (NativePackageManager.isInstalled(NativeDownloadConfig.BACKEND_VLC, platform)) return;
-
-        NativeDownloadConfig downloads = NativeDownloadConfig.load();
-        List<NativeDownloadConfig.DownloadSource> sources = downloads.sources(NativeDownloadConfig.BACKEND_VLC, platform);
-        if (sources.isEmpty()) {
-            VideoPlayerMain.LOGGER.warn("No VLC fallback runtime download sources are configured for {}", platform);
-            return;
-        }
-
-        VideoPlayerMain.LOGGER.info("Downloading VLC fallback runtime for {} after MPV could not load", platform);
-        NativePackageManager.DownloadResult result = NativePackageManager.downloadAndInstall(
-                NativeDownloadConfig.BACKEND_VLC, platform, sources, downloadProxy, null, active
-        );
-        if (!active.getAsBoolean()) return;
-        if (result.success()) {
-            VideoPlayerMain.LOGGER.info("Installed VLC fallback runtime for {} from {}", platform, result.sourceName());
-            return;
-        }
-        VideoPlayerMain.LOGGER.warn("Failed to download VLC fallback runtime for {}: {}",
-                platform, message(result.message()), result.error());
     }
 
     private static String backend(String raw) {

@@ -22,7 +22,6 @@ public final class PaperNativeRuntime {
 
     private final long epoch = EPOCHS.incrementAndGet();
     private final Installer installer;
-    private final Installer fallbackInstaller;
     private final BooleanSupplier loader;
     private final TaskLauncher launcher;
     private final AtomicBoolean active = new AtomicBoolean(true);
@@ -30,9 +29,8 @@ public final class PaperNativeRuntime {
     private volatile Cancellable task = () -> {};
     private volatile Throwable error;
 
-    private PaperNativeRuntime(Installer installer, Installer fallbackInstaller, BooleanSupplier loader, TaskLauncher launcher) {
+    private PaperNativeRuntime(Installer installer, BooleanSupplier loader, TaskLauncher launcher) {
         this.installer = installer;
-        this.fallbackInstaller = fallbackInstaller;
         this.loader = loader;
         this.launcher = launcher;
     }
@@ -40,8 +38,7 @@ public final class PaperNativeRuntime {
     public static PaperNativeRuntime start(VideoPlayerPaperPlugin plugin, PaperNativeConfig config) {
         return start(
                 config::downloadIfMissing,
-                config::downloadVlcFallbackIfMissing,
-                StreamListener::load,
+                StreamListener::loadMpvOnly,
                 runnable -> {
                     FoliaScheduler.TaskHandle scheduled = FoliaScheduler.runAsync(runnable);
                     return scheduled::cancel;
@@ -50,11 +47,7 @@ public final class PaperNativeRuntime {
     }
 
     static PaperNativeRuntime start(Installer installer, BooleanSupplier loader, TaskLauncher launcher) {
-        return start(installer, active -> {}, loader, launcher);
-    }
-
-    static PaperNativeRuntime start(Installer installer, Installer fallbackInstaller, BooleanSupplier loader, TaskLauncher launcher) {
-        PaperNativeRuntime runtime = new PaperNativeRuntime(installer, fallbackInstaller, loader, launcher);
+        PaperNativeRuntime runtime = new PaperNativeRuntime(installer, loader, launcher);
         PaperNativeRuntime previous = CURRENT.getAndSet(runtime);
         if (previous != null) previous.stop();
         runtime.launch();
@@ -127,22 +120,6 @@ public final class PaperNativeRuntime {
         StreamListener.resetLoadState();
         if (!publishState(State.LOADING)) return;
         LoadAttempt attempt = loadAttempt();
-        if (!attempt.loaded() && isCurrent()) {
-            try {
-                fallbackInstaller.install(this::isCurrent);
-            } catch (Throwable fallbackError) {
-                VideoPlayerMain.LOGGER.warn("Failed to prepare VLC fallback runtime after the primary backend could not load", fallbackError);
-            }
-            if (!isCurrent()) return;
-            StreamListener.resetLoadState();
-            if (!publishState(State.LOADING)) return;
-            LoadAttempt retried = loadAttempt();
-            if (!retried.loaded() && attempt.error() != null && retried.error() != null
-                    && retried.error() != attempt.error()) {
-                retried.error().addSuppressed(attempt.error());
-            }
-            attempt = retried;
-        }
         if (!isCurrent()) return;
         if (attempt.loaded()) {
             error = null;

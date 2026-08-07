@@ -38,3 +38,18 @@ jobs:
           path: |
             paper-plugin/build/libs/VideoPlayer-Paper-*.jar
             !paper-plugin/build/libs/*-plain.jar
+  paper-mpv-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+      - name: initialize managed MPV in Temurin Docker
+        run: >-
+          docker run --rm
+          --volume "${GITHUB_WORKSPACE}:/workspace"
+          --workdir /workspace
+          --env VIDEOPLAYER_MPV_SMOKE=true
+          eclipse-temurin:25-jdk-noble
+          bash -lc 'apt-get update && apt-get install -y --no-install-recommends libmpv2 && chmod +x ./gradlew && ./gradlew :paper-plugin:test --tests com.github.squi2rel.vp.video.MpvNativeSmokeTest --no-daemon --rerun-tasks'

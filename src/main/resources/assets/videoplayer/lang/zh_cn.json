@@ -252,7 +252,7 @@
   "error.videoplayer.native.load_failed_after_install": "%s 运行库已安装但加载失败。请重启 Minecraft 或检查游戏日志。",
   "error.videoplayer.native_backend_initializing": "服务端视频运行库正在初始化，请稍后重试",
   "error.videoplayer.native_backend_unavailable": "服务端视频运行库未下载、不可用或加载失败，请先安装运行库后重试",
-  "error.videoplayer.native_backend_unavailable_detail": "服务端无法使用 MPV 或 VLC 播放后端%s。请联系服主安装或修复原生运行库。",
+  "error.videoplayer.native_backend_unavailable_detail": "服务端无法使用 MPV 播放后端%s。请联系服主安装或修复原生运行库。",
   "error.videoplayer.native.invalid_proxy": "代理配置无效: %s",
   "error.videoplayer.native.library_missing": "zip 中找不到 %s 原生库",
   "error.videoplayer.native.no_sources": "没有配置下载地址",
