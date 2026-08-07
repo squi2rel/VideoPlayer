@@ -53,3 +53,19 @@ jobs:
           --env VIDEOPLAYER_MPV_SMOKE=true
           eclipse-temurin:25-jdk-noble
           bash -lc 'apt-get update && apt-get install -y --no-install-recommends libmpv2 && chmod +x ./gradlew && ./gradlew :paper-plugin:test --tests com.github.squi2rel.vp.video.MpvNativeSmokeTest --no-daemon --rerun-tasks'
+  windows-mpv-smoke:
+    runs-on: windows-2025
+    steps:
+      - name: checkout repository
+        uses: actions/checkout@v4
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+      - name: setup jdk
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'microsoft'
+      - name: initialize managed MPV on Windows
+        env:
+          VIDEOPLAYER_MPV_WINDOWS_SMOKE: 'true'
+        run: .\gradlew.bat :paper-plugin:test --tests com.github.squi2rel.vp.video.MpvWindowsNativeSmokeTest --no-daemon --rerun-tasks
