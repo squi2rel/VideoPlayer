@@ -20,6 +20,13 @@ class VideoProtocolTest {
     }
 
     @Test
+    void advertisesTheReleased202TokenForThe203ClientHandshake() {
+        assertEquals("2.0.2|vp5", VideoProtocol.handshakeToken("2.0.3"));
+        assertTrue(VideoProtocol.compatible("2.0.2", VideoProtocol.handshakeToken("2.0.3")));
+        assertEquals("2.0.4|vp5", VideoProtocol.handshakeToken("2.0.4"));
+    }
+
+    @Test
     void acceptsOnlyPublishedWireRevisions() {
         assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|vp5"));
         assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|vp2"));

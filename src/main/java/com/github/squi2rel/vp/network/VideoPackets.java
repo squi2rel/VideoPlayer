@@ -394,6 +394,12 @@ public final class VideoPackets {
         return config(VideoPacketType.CONFIG, version, config);
     }
 
+    public static byte[] clientConfig(String version) {
+        ByteBuf buf = create(VideoPacketType.CONFIG);
+        writeString(buf, VideoProtocol.handshakeToken(version));
+        return toByteArray(buf);
+    }
+
     public static byte[] resetClient(String version, ServerConfig config, long nonce) {
         ByteBuf buf = create(VideoPacketType.RESET_CLIENT);
         writeString(buf, version);

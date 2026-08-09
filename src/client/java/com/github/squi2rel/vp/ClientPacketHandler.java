@@ -707,9 +707,7 @@ public class ClientPacketHandler {
     }
 
     public static void config(String version) {
-        ByteBuf buf = VideoPackets.create(VideoPacketType.CONFIG);
-        writeString(buf, VideoProtocol.token(version));
-        send(VideoPackets.toByteArray(buf));
+        send(VideoPackets.clientConfig(version));
     }
 
     private static void handshakeAck(long nonce) {

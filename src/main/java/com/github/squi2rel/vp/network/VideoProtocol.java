@@ -21,6 +21,10 @@ public final class VideoProtocol {
         return token;
     }
 
+    public static String handshakeToken(String version) {
+        return "2.0.3".equals(releaseVersion(version)) ? token("2.0.2") : token(version);
+    }
+
     public static String legacyToken() {
         return "2.0.1|vp" + LEGACY_WIRE_REVISION;
     }
