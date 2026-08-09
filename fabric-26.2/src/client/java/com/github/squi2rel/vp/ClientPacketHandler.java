@@ -427,6 +427,7 @@ public class ClientPacketHandler {
     }
 
     private static CompletableFuture<VideoInfo> resolveLocalProvider(ClientVideoScreen screen, VideoInfo info) {
+        if (!LocalPlaybackResolutionPolicy.shouldResolve(info)) return null;
         int localQuality = VideoPlayerClient.config == null ? BiliQuality.DEFAULT_QN : VideoPlayerClient.config.bilibiliQuality;
         int screenLimit = screen == null || screen.metadata == null
                 ? BiliQuality.UNLIMITED
