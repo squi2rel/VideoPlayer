@@ -128,48 +128,17 @@ tasks.named('check') {
 	dependsOn tasks.named('clientUnitTest')
 }
 
-def bundledAndroidVlcUrl = 'https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-arm64-v8a.zip'
-def bundledAndroidVlcSha256 = 'dbae70c264a9d86cd8d7fbd7ca35388cbe973de03636c08f0ac8d7cdb493f9ec'
-def bundledAndroidVlcZip = layout.buildDirectory.file('bundled-native/libvlc-android-arm64-v8a.zip')
-
-tasks.register('downloadBundledAndroidVlc') {
-	inputs.property 'url', bundledAndroidVlcUrl
-	inputs.property 'sha256', bundledAndroidVlcSha256
-	outputs.file bundledAndroidVlcZip
-	doLast {
-		def target = bundledAndroidVlcZip.get().asFile
-		target.parentFile.mkdirs()
-		if (target.isFile()) {
-			def digest = java.security.MessageDigest.getInstance('SHA-256').digest(target.bytes).encodeHex().toString()
-			if (digest == bundledAndroidVlcSha256) return
-			target.delete()
-		}
-		def temporary = new File(target.parentFile, target.name + '.tmp')
-		temporary.delete()
-		new URI(bundledAndroidVlcUrl).toURL().withInputStream { input ->
-			temporary.withOutputStream { output -> output << input }
-		}
-		def digest = java.security.MessageDigest.getInstance('SHA-256').digest(temporary.bytes).encodeHex().toString()
-		if (digest != bundledAndroidVlcSha256) {
-			temporary.delete()
-			throw new GradleException("Bundled Android VLC SHA-256 mismatch: ${digest}")
-		}
-		if (!temporary.renameTo(target)) throw new GradleException('Failed to store bundled Android VLC package')
-	}
-}
-
 processResources {
-	dependsOn tasks.named('downloadBundledAndroidVlc')
+	doFirst {
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.zip'))
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.NOTICE.txt'))
+	}
 	inputs.properties([
 		version: project.version,
 		loader_min_version: rootProject.loader_26_2_version,
 		minecraft_dependency: '~26.2',
 		java_version: '25'
 	])
-	from(bundledAndroidVlcZip) {
-		into 'assets/videoplayer/native/vlc'
-		rename { 'android_arm64-v8a.zip' }
-	}
 	filesMatching('fabric.mod.json') {
 		expand inputs.properties
 	}

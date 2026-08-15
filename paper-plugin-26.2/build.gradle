@@ -61,45 +61,14 @@ tasks.test {
     workingDir rootProject.file('paper-plugin')
 }
 
-def bundledMpvUrl = 'https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-windows-x64.zip'
-def bundledMpvSha256 = '0a1e614d3b3db315895d19b1e97013fd12da9bc20c50d02d5de3b71a959dfdfb'
-def bundledMpvZip = layout.buildDirectory.file('bundled-native/libmpv-windows-x64.zip')
-
-tasks.register('downloadBundledWindowsMpv') {
-    inputs.property 'url', bundledMpvUrl
-    inputs.property 'sha256', bundledMpvSha256
-    outputs.file bundledMpvZip
-    doLast {
-        def target = bundledMpvZip.get().asFile
-        target.parentFile.mkdirs()
-        if (target.isFile()) {
-            def digest = java.security.MessageDigest.getInstance('SHA-256').digest(target.bytes).encodeHex().toString()
-            if (digest == bundledMpvSha256) return
-            target.delete()
-        }
-        def temporary = new File(target.parentFile, target.name + '.tmp')
-        temporary.delete()
-        new URI(bundledMpvUrl).toURL().withInputStream { input ->
-            temporary.withOutputStream { output -> output << input }
-        }
-        def digest = java.security.MessageDigest.getInstance('SHA-256').digest(temporary.bytes).encodeHex().toString()
-        if (digest != bundledMpvSha256) {
-            temporary.delete()
-            throw new GradleException("Bundled MPV SHA-256 mismatch: ${digest}")
-        }
-        if (!temporary.renameTo(target)) throw new GradleException('Failed to store bundled MPV package')
-    }
-}
-
 tasks.processResources {
-    dependsOn tasks.named('downloadBundledWindowsMpv')
+    doFirst {
+        java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/libmpv-windows-x64.zip'))
+    }
     inputs.property 'version', project.version
     inputs.property 'apiVersion', '26.2'
     from("${rootProject.projectDir}/src/main/resources/assets/videoplayer/native-downloads.json") {
         into 'assets/videoplayer'
-    }
-    from(bundledMpvZip) {
-        into 'assets/videoplayer/native'
     }
     filesMatching('plugin.yml') {
         expand 'version': project.version, 'apiVersion': '26.2'

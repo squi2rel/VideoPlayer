@@ -35,6 +35,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
@@ -57,8 +58,6 @@ public final class NativePackageManager {
     private static final int MAX_ARCHIVE_ENTRIES = 4096;
     public static final String BACKEND_VLC = NativeDownloadConfig.BACKEND_VLC;
     public static final String BACKEND_MPV = NativeDownloadConfig.BACKEND_MPV;
-    public static final String BUNDLED_ANDROID_VLC_RESOURCE = "/assets/videoplayer/native/vlc/android_arm64-v8a.zip";
-    public static final String BUNDLED_ANDROID_VLC_SHA256 = "dbae70c264a9d86cd8d7fbd7ca35388cbe973de03636c08f0ac8d7cdb493f9ec";
 
     private static final Path ROOT = configDir().resolve("videoplayer-native");
     private static final Path PACKAGE_ROOT = ROOT.resolve("packages");
@@ -78,11 +77,11 @@ public final class NativePackageManager {
     private static final ConcurrentMap<String, ReentrantLock> INSTALL_LOCKS = new ConcurrentHashMap<>();
     private static final BooleanSupplier ALWAYS_ACTIVE = () -> true;
     private static final long DOWNLOAD_READ_IDLE_TIMEOUT_MILLIS = 30_000L;
-    private static final ExecutorService DOWNLOAD_READ_EXECUTOR = Executors.newCachedThreadPool(task -> {
-        Thread thread = new Thread(task, "VideoPlayer-native-download-read");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private static final long DOWNLOAD_CANCEL_POLL_MILLIS = 100L;
+    private static final Object DOWNLOAD_READ_EXECUTOR_LOCK = new Object();
+    private static final Set<CompletableFuture<?>> ACTIVE_HTTP_REQUESTS = ConcurrentHashMap.newKeySet();
+    private static final Set<InputStream> ACTIVE_RESPONSE_BODIES = ConcurrentHashMap.newKeySet();
+    private static ExecutorService downloadReadExecutor;
 
     private NativePackageManager() {
     }
@@ -125,6 +124,24 @@ public final class NativePackageManager {
         );
     }
 
+    static void cancelActiveDownloads() {
+        for (CompletableFuture<?> request : List.copyOf(ACTIVE_HTTP_REQUESTS)) {
+            request.cancel(true);
+        }
+        for (InputStream input : List.copyOf(ACTIVE_RESPONSE_BODIES)) {
+            try {
+                input.close();
+            } catch (IOException ignored) {
+            }
+        }
+        ExecutorService executor;
+        synchronized (DOWNLOAD_READ_EXECUTOR_LOCK) {
+            executor = downloadReadExecutor;
+            downloadReadExecutor = null;
+        }
+        if (executor != null) executor.shutdownNow();
+    }
+
     public static String selectedPlatform(String backend) {
         return SELECTED_PLATFORMS.getOrDefault(NativeDownloadConfig.normalizeBackend(backend), platformKey());
     }
@@ -147,34 +164,6 @@ public final class NativePackageManager {
         String normalizedBackend = NativeDownloadConfig.normalizeBackend(backend);
         String normalizedPlatform = NativeDownloadConfig.normalizeKnownPlatform(platform);
         return isValidInstallation(installedRoot(normalizedBackend, normalizedPlatform), normalizedBackend, normalizedPlatform);
-    }
-
-    public static synchronized boolean ensureBundledAndroidVlc() {
-        if (!"android".equals(NativeDownloadConfig.osKey())) return true;
-        String platform = platformKey();
-        if (!NativeDownloadConfig.ANDROID_ARM64.equals(platform)) return false;
-        selectPlatform(BACKEND_VLC, platform);
-        if (bundledAndroidVlcReady()) return true;
-        DownloadResult result = installBundled(
-                BACKEND_VLC,
-                platform,
-                BUNDLED_ANDROID_VLC_RESOURCE,
-                BUNDLED_ANDROID_VLC_SHA256
-        );
-        if (!result.success()) {
-            VideoPlayerMain.LOGGER.warn("Failed to install bundled Android VLC runtime", result.error());
-            return false;
-        }
-        return bundledAndroidVlcReady();
-    }
-
-    private static boolean bundledAndroidVlcReady() {
-        Path root = installedRoot(BACKEND_VLC, NativeDownloadConfig.ANDROID_ARM64);
-        return isValidInstallation(root, BACKEND_VLC, NativeDownloadConfig.ANDROID_ARM64)
-                && Files.isRegularFile(root.resolve("libvlc.so"), LinkOption.NOFOLLOW_LINKS)
-                && Files.isRegularFile(root.resolve("libvlcjni.so"), LinkOption.NOFOLLOW_LINKS)
-                && Files.isRegularFile(root.resolve("libvlc_jvm_bridge.so"), LinkOption.NOFOLLOW_LINKS)
-                && Files.isRegularFile(root.resolve("libc++_shared.so"), LinkOption.NOFOLLOW_LINKS);
     }
 
     public static DownloadResult downloadAndInstall(String backend, List<NativeDownloadConfig.DownloadSource> sources, ProgressListener listener) {
@@ -243,6 +232,7 @@ public final class NativePackageManager {
             return DownloadResult.fail(VpTranslation.of("error.videoplayer.native.invalid_proxy", "Invalid proxy configuration: %s", e.getMessage()), e);
         }
 
+        boolean proxyConfigured = proxy != null && !proxy.isBlank();
         Throwable lastError = null;
         for (int i = 0; i < usableSources.size(); i++) {
             NativeDownloadConfig.DownloadSource source = usableSources.get(i);
@@ -252,7 +242,7 @@ public final class NativePackageManager {
                 notify(listener, new DownloadProgress(i + 1, usableSources.size(), 0, -1,
                         sourceName, VpTranslation.of("message.videoplayer.native.connecting", "Connecting")));
                 Path zip = download(http, temporaryDownloadName(normalizedBackend, normalizedPlatform, ".zip.tmp"), source,
-                        i, usableSources.size(), listener, active);
+                        i, usableSources.size(), listener, active, proxyConfigured);
                 checkActive(active);
                 verify(source, zip, active);
                 checkActive(active);
@@ -340,6 +330,7 @@ public final class NativePackageManager {
             return DownloadResult.fail(VpTranslation.of("error.videoplayer.native.invalid_proxy", "Invalid proxy configuration: %s", e.getMessage()), e);
         }
 
+        boolean proxyConfigured = proxy != null && !proxy.isBlank();
         Throwable lastError = null;
         for (int i = 0; i < usableSources.size(); i++) {
             NativeDownloadConfig.DownloadSource source = usableSources.get(i);
@@ -349,7 +340,7 @@ public final class NativePackageManager {
                 notify(listener, new DownloadProgress(i + 1, usableSources.size(), 0, -1,
                         selectedSource, VpTranslation.of("message.videoplayer.native.connecting", "Connecting")));
                 Path downloaded = download(http, temporaryDownloadName(name, platform, ".tmp"), source,
-                        i, usableSources.size(), listener, guard);
+                        i, usableSources.size(), listener, guard, proxyConfigured);
                 checkActive(guard);
                 verify(source, downloaded, guard);
                 checkActive(guard);
@@ -424,7 +415,7 @@ public final class NativePackageManager {
     }
 
     public static DownloadResult installBundled(String backend, String platform, String resource, String expectedSha256,
-                                                BooleanSupplier active) {
+                                                 BooleanSupplier active) {
         String normalizedBackend = NativeDownloadConfig.normalizeBackend(backend);
         String normalizedPlatform = NativeDownloadConfig.normalizeKnownPlatform(platform);
         BooleanSupplier guard = active == null ? ALWAYS_ACTIVE : active;
@@ -730,18 +721,18 @@ public final class NativePackageManager {
 
     private static Path download(HttpClient http, String targetName, NativeDownloadConfig.DownloadSource source, int sourceIndex, int sourceCount,
                                   ProgressListener listener) throws Exception {
-        return download(http, targetName, source, sourceIndex, sourceCount, listener, ALWAYS_ACTIVE);
+        return download(http, targetName, source, sourceIndex, sourceCount, listener, ALWAYS_ACTIVE, false);
     }
 
     private static Path download(HttpClient http, String targetName, NativeDownloadConfig.DownloadSource source, int sourceIndex, int sourceCount,
-                                 ProgressListener listener, BooleanSupplier active) throws Exception {
+                                 ProgressListener listener, BooleanSupplier active, boolean proxyConfigured) throws Exception {
         checkActive(active);
         Files.createDirectories(DOWNLOAD_ROOT);
         Path target = DOWNLOAD_ROOT.resolve(targetName);
         Files.deleteIfExists(target);
         try {
             URI uri = URI.create(source.url.trim());
-            if (!MediaAddressPolicy.isAllowed(uri.toString())) {
+            if (!MediaAddressPolicy.isAllowedForDownload(uri.toString(), proxyConfigured)) {
                 throw new IOException("Download source address is not allowed");
             }
             for (int redirect = 0; ; redirect++) {
@@ -750,7 +741,10 @@ public final class NativePackageManager {
                         .header("User-Agent", "VideoPlayer/" + VideoPlayerMain.version)
                         .GET()
                         .build();
-                HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                HttpResponse<InputStream> response = awaitDownloadFuture(
+                        http.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream()),
+                        active
+                );
                 int status = response.statusCode();
                 if (status >= 300 && status < 400) {
                     try (InputStream ignored = response.body()) {
@@ -759,7 +753,7 @@ public final class NativePackageManager {
                             throw new IOException("Too many redirects while downloading native package");
                         }
                         URI next = uri.resolve(location);
-                        if (!MediaAddressPolicy.isAllowed(next.toString())) {
+                        if (!MediaAddressPolicy.isAllowedForDownload(next.toString(), proxyConfigured)) {
                             throw new IOException("Download redirect target is not allowed");
                         }
                         uri = next;
@@ -812,9 +806,43 @@ public final class NativePackageManager {
         return HttpProxyConfig.parse(proxy).configure(builder).build();
     }
 
-    private static int readWithIdleTimeout(InputStream input, byte[] buffer, BooleanSupplier active) throws IOException {
-        Future<Integer> readTask = DOWNLOAD_READ_EXECUTOR.submit(() -> input.read(buffer));
+    static <T> T awaitDownloadFuture(CompletableFuture<T> request, BooleanSupplier active) throws Exception {
+        ACTIVE_HTTP_REQUESTS.add(request);
         try {
+            while (true) {
+                checkActive(active);
+                try {
+                    return request.get(DOWNLOAD_CANCEL_POLL_MILLIS, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException ignored) {
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    CancellationException cancelled = new CancellationException("Native package operation interrupted");
+                    cancelled.initCause(interrupted);
+                    throw cancelled;
+                } catch (ExecutionException error) {
+                    Throwable cause = error.getCause();
+                    if (cause instanceof Exception exception) throw exception;
+                    if (cause instanceof Error fatal) throw fatal;
+                    throw new IOException("Unable to receive download response", cause);
+                }
+            }
+        } finally {
+            ACTIVE_HTTP_REQUESTS.remove(request);
+            if (!request.isDone()) request.cancel(true);
+        }
+    }
+
+    static int readWithIdleTimeout(InputStream input, byte[] buffer, BooleanSupplier active) throws IOException {
+        Future<Integer> readTask = null;
+        ACTIVE_RESPONSE_BODIES.add(input);
+        try {
+            synchronized (DOWNLOAD_READ_EXECUTOR_LOCK) {
+                checkActive(active);
+                if (downloadReadExecutor == null || downloadReadExecutor.isShutdown()) {
+                    downloadReadExecutor = newDownloadReadExecutor();
+                }
+                readTask = downloadReadExecutor.submit(() -> input.read(buffer));
+            }
             long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DOWNLOAD_READ_IDLE_TIMEOUT_MILLIS);
             while (true) {
                 checkActive(active);
@@ -837,7 +865,8 @@ public final class NativePackageManager {
                 }
             }
         } finally {
-            if (!readTask.isDone()) {
+            ACTIVE_RESPONSE_BODIES.remove(input);
+            if (readTask != null && !readTask.isDone()) {
                 try {
                     input.close();
                 } catch (IOException ignored) {
@@ -845,6 +874,15 @@ public final class NativePackageManager {
                 readTask.cancel(true);
             }
         }
+    }
+
+    private static ExecutorService newDownloadReadExecutor() {
+        return Executors.newCachedThreadPool(task -> {
+            Thread thread = new Thread(task, "VideoPlayer-native-download-read");
+            thread.setDaemon(true);
+            thread.setContextClassLoader(ClassLoader.getPlatformClassLoader());
+            return thread;
+        });
     }
 
     private static void verify(NativeDownloadConfig.DownloadSource source, Path zip) throws Exception {

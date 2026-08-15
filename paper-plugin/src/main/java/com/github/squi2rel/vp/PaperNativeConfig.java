@@ -13,9 +13,6 @@ import java.util.function.BooleanSupplier;
 
 final class PaperNativeConfig {
     private static final String DEFAULT_BACKEND = NativeDownloadConfig.BACKEND_MPV;
-    private static final String BUNDLED_MPV_PLATFORM = "windows_x64";
-    private static final String BUNDLED_MPV_RESOURCE = "/assets/videoplayer/native/libmpv-windows-x64.zip";
-    private static final String BUNDLED_MPV_SHA256 = "0a1e614d3b3db315895d19b1e97013fd12da9bc20c50d02d5de3b71a959dfdfb";
 
     private final String backend;
     private final String platform;
@@ -163,21 +160,6 @@ final class PaperNativeConfig {
         if (!active.getAsBoolean()) return;
         if (NativePackageManager.isInstalled(backend, platform)) {
             return;
-        }
-
-        if (NativeDownloadConfig.BACKEND_MPV.equals(backend) && BUNDLED_MPV_PLATFORM.equals(platform)) {
-            if (!active.getAsBoolean()) return;
-            VideoPlayerMain.LOGGER.info("Installing bundled VideoPlayer native package {} {}", backend, platform);
-            NativePackageManager.DownloadResult bundled = NativePackageManager.installBundled(
-                    backend, platform, BUNDLED_MPV_RESOURCE, BUNDLED_MPV_SHA256, active
-            );
-            if (!active.getAsBoolean()) return;
-            if (bundled.success()) {
-                VideoPlayerMain.LOGGER.info("Installed bundled VideoPlayer native package {} {}", backend, platform);
-                return;
-            }
-            VideoPlayerMain.LOGGER.warn("Failed to install bundled VideoPlayer native package {} {}; falling back to download: {}",
-                    backend, platform, message(bundled.message()), bundled.error());
         }
 
         NativeDownloadConfig downloads = NativeDownloadConfig.load();

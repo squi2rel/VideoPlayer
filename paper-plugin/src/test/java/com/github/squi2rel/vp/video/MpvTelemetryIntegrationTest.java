@@ -1,5 +1,6 @@
 package com.github.squi2rel.vp.video;
 
+import com.github.squi2rel.vp.NativeDownloadConfig;
 import com.github.squi2rel.vp.NativePackageManager;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
@@ -22,11 +23,12 @@ class MpvTelemetryIntegrationTest {
     void readsAudioAndVideoTelemetryFromRealMedia() {
         System.setProperty("videoplayer.configDir", System.getenv("VPLIGHT_NATIVE_DIR"));
         NativePackageManager.selectPlatform(NativePackageManager.BACKEND_MPV, "windows_x64");
-        NativePackageManager.DownloadResult installed = NativePackageManager.installBundled(
+        NativeDownloadConfig downloads = NativeDownloadConfig.load();
+        NativePackageManager.DownloadResult installed = NativePackageManager.downloadAndInstall(
                 NativePackageManager.BACKEND_MPV,
                 "windows_x64",
-                "/assets/videoplayer/native/libmpv-windows-x64.zip",
-                "0a1e614d3b3db315895d19b1e97013fd12da9bc20c50d02d5de3b71a959dfdfb"
+                downloads.sources(NativePackageManager.BACKEND_MPV, "windows_x64"),
+                null
         );
         assertTrue(installed.success(), () -> String.valueOf(installed.error()));
         MpvLibrary.LibMpv lib = MpvLibrary.get();

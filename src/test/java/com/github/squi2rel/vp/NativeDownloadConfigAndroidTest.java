@@ -44,7 +44,7 @@ class NativeDownloadConfigAndroidTest {
     }
 
     @Test
-    void bundledDownloadListContainsNoUnsupportedAndroidRuntime() throws Exception {
+    void defaultDownloadListContainsOnlySupportedAndroidRuntime() throws Exception {
         try (InputStream input = NativeDownloadConfigAndroidTest.class.getResourceAsStream("/assets/videoplayer/native-downloads.json")) {
             assertTrue(input != null);
             String json = new String(input.readAllBytes(), StandardCharsets.UTF_8);

@@ -47,10 +47,6 @@ final class VlcLibrary {
             if (lib != null) return lib;
             if (loadError != null) throw unavailable(loadError);
             Throwable last = null;
-            if (VideoPlayerMain.android && !NativePackageManager.ensureBundledAndroidVlc()) {
-                loadError = new IllegalStateException("Bundled Android ARM64 VLC runtime is unavailable for " + NativeDownloadConfig.platformKey());
-                throw unavailable(loadError);
-            }
             Optional<NativePackageManager.PreparedNativePackage> prepared = NativePackageManager.prepareForLoad(NativePackageManager.BACKEND_VLC);
             if (prepared.isPresent()) {
                 NativePackageManager.PreparedNativePackage nativePackage = prepared.get();
@@ -70,7 +66,9 @@ final class VlcLibrary {
             }
             NativeLibraryLoader.clearWindowsDllDirectory();
             if (VideoPlayerMain.android) {
-                loadError = last == null ? new IllegalStateException("Bundled Android VLC runtime could not be prepared") : last;
+                loadError = last == null
+                        ? new IllegalStateException("Android VLC runtime is not installed or could not be prepared")
+                        : last;
                 throw unavailable(loadError);
             }
             if ("windows".equals(NativeDownloadConfig.osKey())) {

@@ -34,6 +34,36 @@ public final class MediaAddressPolicy {
         return isAllowed(raw, InetAddress::getAllByName);
     }
 
+    public static boolean isAllowedForDownload(String raw, boolean proxyConfigured) {
+        return isAllowedForDownload(raw, proxyConfigured, InetAddress::getAllByName);
+    }
+
+    static boolean isAllowedForDownload(String raw, boolean proxyConfigured, HostResolver resolver) {
+        if (!proxyConfigured) return isAllowed(raw, resolver);
+        if (!isSyntacticallyAllowed(raw)) return false;
+        URI uri;
+        try {
+            uri = URI.create(raw.trim());
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+        try {
+            String host = uri.getHost();
+            boolean ipLiteral = isIpLiteral(host);
+            InetAddress[] addresses = resolver.resolve(host);
+            if (addresses.length == 0) return false;
+            for (InetAddress address : addresses) {
+                if (!ipLiteral && isProxySyntheticAddress(address)) continue;
+                if (isBlocked(address)) return false;
+            }
+            return true;
+        } catch (UnknownHostException ignored) {
+            return false;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
     static boolean isAllowed(String raw, HostResolver resolver) {
         if (!isSyntacticallyAllowed(raw)) return false;
         URI uri;
@@ -54,6 +84,24 @@ public final class MediaAddressPolicy {
         } catch (RuntimeException ignored) {
             return false;
         }
+    }
+
+    private static boolean isIpLiteral(String host) {
+        if (host == null || host.isEmpty()) return false;
+        if (host.indexOf(':') >= 0) return true;
+        for (int i = 0; i < host.length(); i++) {
+            char current = host.charAt(i);
+            if ((current < '0' || current > '9') && current != '.') return false;
+        }
+        return true;
+    }
+
+    private static boolean isProxySyntheticAddress(InetAddress address) {
+        if (!(address instanceof Inet4Address)) return false;
+        byte[] bytes = address.getAddress();
+        int first = bytes[0] & 0xff;
+        int second = bytes[1] & 0xff;
+        return first == 198 && (second == 18 || second == 19);
     }
 
     @FunctionalInterface

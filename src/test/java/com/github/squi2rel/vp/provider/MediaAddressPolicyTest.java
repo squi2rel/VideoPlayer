@@ -26,4 +26,56 @@ class MediaAddressPolicyTest {
                 InetAddress.getByName("10.1.2.3")
         }));
     }
+
+    @Test
+    void allowsRemoteDownloadHostWhenProxyOwnsDnsResolution() throws Exception {
+        assertTrue(MediaAddressPolicy.isAllowedForDownload(
+                "https://github.com/example/runtime.zip",
+                true,
+                ignored -> new InetAddress[]{InetAddress.getByName("198.18.0.156")}
+        ));
+    }
+
+    @Test
+    void blocksProxySyntheticRangeWhenUriHostIsAnIpLiteral() {
+        MediaAddressPolicy.HostResolver resolver = host -> new InetAddress[]{InetAddress.getByName(host)};
+
+        assertFalse(MediaAddressPolicy.isAllowedForDownload("https://198.18.0.156/runtime.zip", true, resolver));
+        assertFalse(MediaAddressPolicy.isAllowedForDownload("https://198.19.255.254/runtime.zip", true, resolver));
+    }
+
+    @Test
+    void doesNotApplyProxySyntheticExemptionToIpv6Literals() throws Exception {
+        assertFalse(MediaAddressPolicy.isAllowedForDownload(
+                "https://[2001:4860:4860::8888]/runtime.zip",
+                true,
+                ignored -> new InetAddress[]{InetAddress.getByName("198.18.0.156")}
+        ));
+    }
+
+    @Test
+    void blocksAlternateIpLiteralFormsWhenProxyIsConfigured() {
+        MediaAddressPolicy.HostResolver resolver = host -> new InetAddress[]{InetAddress.getByName(host)};
+
+        assertFalse(MediaAddressPolicy.isAllowedForDownload("https://3323068417/runtime.zip", true, resolver));
+        assertFalse(MediaAddressPolicy.isAllowedForDownload(
+                "https://[::ffff:198.18.0.1]/runtime.zip",
+                true,
+                resolver
+        ));
+        assertFalse(MediaAddressPolicy.isAllowedForDownload(
+                "https://[::ffff:c612:1]/runtime.zip",
+                true,
+                resolver
+        ));
+    }
+
+    @Test
+    void blocksOtherPrivateAddressesWhenProxyIsConfigured() throws Exception {
+        assertFalse(MediaAddressPolicy.isAllowedForDownload(
+                "https://internal.example/runtime.zip",
+                true,
+                ignored -> new InetAddress[]{InetAddress.getByName("10.1.2.3")}
+        ));
+    }
 }

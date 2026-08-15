@@ -99,6 +99,7 @@ public final class PaperNativeRuntime {
         active.set(false);
         state.set(State.STOPPED);
         task.cancel();
+        NativePackageManager.cancelActiveDownloads();
         StreamListener.shutdown();
         CURRENT.compareAndSet(this, null);
     }

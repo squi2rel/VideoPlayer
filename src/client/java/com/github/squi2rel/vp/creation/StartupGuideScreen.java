@@ -889,56 +889,9 @@ public class StartupGuideScreen extends Screen {
             if (VideoPlayerMain.android) {
                 vlcAvailable = vlcInstalled;
                 mpvAvailable = false;
-                if (!vlcInstalled && NativeDownloadConfig.ANDROID_ARM64.equals(NativePackageManager.platformKey())) {
-                    startBundledAndroidVlcInstall();
-                }
             }
             syncButtons();
         }));
-    }
-
-    private void startBundledAndroidVlcInstall() {
-        if (!VideoPlayerMain.android
-                || downloadTask != null
-                || !NativeDownloadConfig.ANDROID_ARM64.equals(NativePackageManager.platformKey())) {
-            return;
-        }
-        String backend = VideoBackends.VLC;
-        String platform = NativeDownloadConfig.ANDROID_ARM64;
-        activeBackend = backend;
-        status = VpTranslation.of("message.videoplayer.native.prepare_download", "Preparing download");
-        sourceIndex = 0;
-        sourceCount = 0;
-        sourceName = "";
-        bytesRead = 0;
-        totalBytes = -1;
-        String taskKey = nativeTaskKey(backend, platform);
-        CompletableFuture<NativePackageManager.DownloadResult> sharedTask = NATIVE_DOWNLOAD_TASKS.computeIfAbsent(taskKey,
-                ignored -> CompletableFuture.supplyAsync(() -> NativePackageManager.installBundled(
-                        backend,
-                        platform,
-                        NativePackageManager.BUNDLED_ANDROID_VLC_RESOURCE,
-                        NativePackageManager.BUNDLED_ANDROID_VLC_SHA256
-                )));
-        downloadTask = sharedTask;
-        sharedTask.whenComplete((result, error) -> {
-            NATIVE_DOWNLOAD_TASKS.remove(taskKey, sharedTask);
-            Minecraft.getInstance().execute(() -> {
-                downloadTask = null;
-                if (error != null) {
-                    status = VpTranslations.from(error, "error.videoplayer.native.bundled_install_failed",
-                            "Bundled native package installation failed: %s", error.getMessage() == null ? "" : error.getMessage());
-                    syncButtons();
-                    return;
-                }
-                status = result.message();
-                if (result.success()) {
-                    markBackendInstalled(backend, true);
-                    vlcAvailable = true;
-                }
-                syncButtons();
-            });
-        });
     }
 
     private void refreshYtdlpAvailability() {
@@ -973,7 +926,8 @@ public class StartupGuideScreen extends Screen {
         if (VideoPlayerMain.android) {
             mpvAvailable = false;
             if (VideoBackends.MPV.equals(backend)) return BackendRefreshResult.RETRY_FAILED;
-            vlcAvailable = vlcInstalled;
+            VlcDecoder.resetLoadState();
+            vlcAvailable = vlcInstalled && VlcDecoder.isAvailable();
             return vlcAvailable ? BackendRefreshResult.RETRY_SUCCEEDED : BackendRefreshResult.RETRY_FAILED;
         }
         if (backendLoaded(backend)) return BackendRefreshResult.RESTART_REQUIRED;
