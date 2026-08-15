@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.codefactor.io/repository/github/mcxqk/videoplayer"><img src="https://www.codefactor.io/repository/github/mcxqk/videoplayer/badge" alt="CodeFactor" /></a>
+  <a href="https://www.codefactor.io/repository/github/mcxyd/videoplayer"><img src="https://www.codefactor.io/repository/github/mcxyd/videoplayer/badge" alt="CodeFactor" /></a>
   <a href="https://www.minecraft.net/"><img src="https://img.shields.io/badge/Minecraft-1.21.11-62B47A" alt="Minecraft 1.21.11"></a>
   <a href="https://adoptium.net/"><img src="https://img.shields.io/badge/Java-21-ED8B00" alt="Java 21"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/mcxqk/VideoPlayer" alt="GPL-3.0 license"></a>
