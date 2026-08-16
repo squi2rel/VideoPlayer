@@ -15,26 +15,45 @@ jobs:
       - name: validate gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
       - name: setup jdk
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
-          java-version: '25'
+          java-version: '21'
           distribution: 'microsoft'
       - name: make gradle wrapper executable
         run: chmod +x ./gradlew
       - name: build
         run: ./gradlew build
-      - name: capture Fabric artifact
+      - name: capture Fabric 1.21.11 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VideoPlayer-Fabric
+          name: VideoPlayer-Fabric-1.21.11
           path: |
-            build/libs/VideoPlayer-*.jar
-            !build/libs/*-sources.jar
-            !build/libs/*-dev-shadow.jar
-      - name: capture Paper artifact
+            fabric-1.21.11/build/libs/VideoPlayer-*.jar
+            !fabric-1.21.11/build/libs/*-sources.jar
+            !fabric-1.21.11/build/libs/*-dev-shadow.jar
+          if-no-files-found: error
+      - name: capture Fabric 26.2 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VideoPlayer-Paper
+          name: VideoPlayer-Fabric-26.2
+          path: |
+            fabric-26.2/build/libs/VideoPlayer-*-26.2.jar
+            !fabric-26.2/build/libs/*-plain.jar
+            !fabric-26.2/build/libs/*-sources.jar
+          if-no-files-found: error
+      - name: capture Paper 1.21.11 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Paper-1.21.11
           path: |
             paper-plugin/build/libs/VideoPlayer-Paper-*.jar
             !paper-plugin/build/libs/*-plain.jar
+          if-no-files-found: error
+      - name: capture Paper 26.2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Paper-26.2
+          path: |
+            paper-plugin-26.2/build/libs/VideoPlayer-Paper-*-26.2.jar
+            !paper-plugin-26.2/build/libs/*-plain.jar
+          if-no-files-found: error
