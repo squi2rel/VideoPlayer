@@ -7,6 +7,7 @@ plugins {
 	id 'base'
 	id 'fabric-loom' version "${loom_version}" apply false
 	id 'net.fabricmc.fabric-loom' version "${loom_version}" apply false
+	id 'net.neoforged.moddev' version "${moddev_version}" apply false
 	id 'com.gradleup.shadow' version '9.2.2' apply false
 }
 
@@ -36,11 +37,32 @@ tasks.named('build') {
 	dependsOn ':mcng-core:build'
 	dependsOn ':mcng-fabric-client:build'
 	dependsOn ':mcng-fabric-client-26.2:build'
+	dependsOn ':neoforge-1.21.1:build'
 }
 
 def releaseVersion = project.version.toString()
 def releaseDirectory = layout.buildDirectory.dir('release')
 def releaseArtifacts = [
+	[
+		fileName: "VideoPlayer-NeoForge-1.21.1-${releaseVersion}.jar",
+		source: file("neoforge-1.21.1/build/libs/VideoPlayer-NeoForge-1.21.1-${releaseVersion}.jar"),
+		type: 'neoforge',
+		minecraft: '1.21.1',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerMain.class',
+		classMajor: 65,
+		requiredEntries: [
+			'META-INF/neoforge.mods.toml',
+			'videoplayer.mixins.json',
+			'videoplayer.client.mixins.json',
+			'com/github/squi2rel/vp/NeoForgeClient.class',
+			'com/github/squi2rel/vp/network/VideoPayload.class',
+			'com/github/squi2rel/vp/network/VideoProtocol.class',
+			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
+			'com/github/squi2rel/vp/shadow/mcng/core/GraphExecutor.class',
+			'org/brotli/dec/BrotliInputStream.class',
+			'com/google/zxing/qrcode/QRCodeWriter.class'
+		]
+	],
 	[
 		fileName: "VideoPlayer-${releaseVersion}.jar",
 		source: file("fabric-1.21.11/build/libs/VideoPlayer-${releaseVersion}.jar"),
@@ -111,7 +133,8 @@ def releaseArtifacts = [
 
 tasks.register('assembleRelease') {
 	group = 'build'
-	description = 'Builds and copies the four supported release archives.'
+	description = 'Builds and copies the five supported release archives.'
+	dependsOn ':neoforge-1.21.1:build'
 	dependsOn ':fabric-1.21.11:build'
 	dependsOn ':fabric-26.2:build'
 	dependsOn ':paper-plugin:build'
@@ -211,6 +234,14 @@ tasks.register('verifyRelease') {
 					}
 					if (metadata.depends?.java != artifact.javaDependency) {
 						throw new GradleException("${archive.name} requires Java ${metadata.depends?.java}; expected ${artifact.javaDependency}")
+					}
+				} else if (artifact.type == 'neoforge') {
+					String metadata = new String(readEntry(jar, 'META-INF/neoforge.mods.toml'), StandardCharsets.UTF_8)
+					for (String expected : ['modId="videoplayer"', "version=\"${releaseVersion}\"", 'authors="squi2rel, cloudfl4re"', "versionRange=\"[${artifact.minecraft}]\""]) {
+						if (!metadata.contains(expected)) throw new GradleException("${archive.name} metadata is missing ${expected}")
+					}
+					if (jar.getJarEntry('fabric.mod.json') != null || jar.entries().any { it.name.startsWith('net/fabricmc/') }) {
+						throw new GradleException("${archive.name} contains unrelocated Fabric compatibility classes or metadata")
 					}
 				} else {
 					String plugin = new String(readEntry(jar, 'plugin.yml'), StandardCharsets.UTF_8)

@@ -11,7 +11,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/squi2rel/VideoPlayer" alt="GPL-3.0 license"></a>
 </p>
 
-VideoPlayer 是用于 Minecraft 1.21.11 以及 26.2 的 Fabric 视频播放模组，配套提供 Paper/Folia 服务端桥接插件。客户端负责解码与渲染，服务端负责区域、屏幕、权限、持久化和玩家间同步；多人服务器中的观看者需要安装相同兼容版本的客户端模组。
+VideoPlayer 支持 Minecraft 1.21.1 NeoForge，以及 1.21.11 和 26.2 Fabric，配套提供 Paper/Folia 服务端桥接插件。客户端负责解码与渲染，服务端负责区域、屏幕、权限、持久化和玩家间同步；多人服务器中的观看者需要安装相同兼容版本的客户端模组。
 
 ## 特性
 
@@ -26,7 +26,8 @@ VideoPlayer 是用于 Minecraft 1.21.11 以及 26.2 的 Fabric 视频播放模�
 
 | 组件 | 要求 |
 | --- | --- |
-| 客户端 | Minecraft 1.21.11/26.2、Fabric Loader、Fabric API、Java 21/25 |
+| NeoForge 客户端 / 服务端模组 | Minecraft 1.21.1、NeoForge 21.1（构建验证版本 21.1.259）、Java 21 |
+| Fabric 客户端 / 服务端模组 | Minecraft 1.21.11/26.2、Fabric Loader、Fabric API、Java 21/25 |
 | 服务端桥接 | Paper/folia 1.21.11/26.2、Java 21/25 |
 
 运行库下载源覆盖 Windows、Linux、macOS 和 Android 的常见架构。MPV 与 VLC 的实际可用性取决于所选平台和本机运行库；可通过启动向导安装或改用已有运行库。
@@ -34,8 +35,8 @@ VideoPlayer 是用于 Minecraft 1.21.11 以及 26.2 的 Fabric 视频播放模�
 ## 安装
 
 1. 从 GitHub Release 或 [Actions 构建产物](https://github.com/squi2rel/VideoPlayer/actions) 获取对应 JAR。
-2. 将 Fabric 模组 JAR 放入每位观看者的 `mods` 目录，并安装匹配版本的 Fabric Loader 与 Fabric API。
-3. 多人服务器将 Paper 插件 JAR 放入 `plugins` 目录后重启服务器。该插件是客户端模组的服务端桥接，不能单独让原版客户端播放视频。
+2. 将对应加载器的模组 JAR 放入每位观看者的 `mods` 目录。NeoForge 1.21.1 版只需 NeoForge；Fabric 版还需匹配的 Fabric API。
+3. NeoForge 1.21.1 多人服务器将同一个 NeoForge JAR 放入服务端 `mods` 目录。Paper/Folia 服务器使用相应版本的插件 JAR，放入 `plugins` 目录后重启。服务端组件不能单独让原版客户端播放视频。
 4. 进入游戏后执行 `/videoplayer boot`，选择 VLC 或 MPV，并按向导完成运行库，可选 `yt-dlp` 配置。
 5. 使用客户端的创建、管理界面或命令建立区域和屏幕，再将可播放 URL 加入屏幕队列。
 
@@ -74,7 +75,15 @@ Paper 插件提供的管理命令如下：
 
 ## 构建
 
-项目使用 Gradle Wrapper 和 Java 21：
+项目使用 Gradle Wrapper：
+
+单独构建 NeoForge 1.21.1（Java 21）并运行其测试：
+
+```bash
+./gradlew :neoforge-1.21.1:build
+```
+
+构建全部版本需要 Java 25；Gradle 会自动获取其他模块所需的 Java 21 工具链：
 
 ```powershell
 .\gradlew.bat build
@@ -86,12 +95,13 @@ Paper 插件提供的管理命令如下：
 
 | 模块 | 产物路径 |
 | --- | --- |
+| 1.21.1 NeoForge 模组 | `neoforge-1.21.1/build/libs/VideoPlayer-NeoForge-1.21.1-<版本>.jar` |
 | 1.21.11Fabric 客户端模组 | `build/libs/VideoPlayer-Fabric-1.21.11.jar` |
 | 1.21.11Paper/Folia 服务端插件 | `paper-plugin/build/libs/VideoPlayer-Paper-1.21.11.jar` |
 | 26.2Fabric 客户端模组 | `build/libs/VideoPlayer-Fabric-26.2.jar` |
 | 26.2Paper/Folia 服务端插件 | `paper-plugin/build/libs/VideoPlayer-Paper-26.2.jar` |
 
-GitHub Actions 会在每次推送后使用 Java 25 执行构建，并上传这四个产物。
+GitHub Actions 会在每次推送后使用 Java 25 执行构建，并上传这五个产物。
 
 ## 开源协议与作者
 

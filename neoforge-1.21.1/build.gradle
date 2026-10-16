@@ -1,0 +1,247 @@
+plugins {
+	id 'java-library'
+	id 'net.neoforged.moddev'
+	id 'com.gradleup.shadow'
+	id 'maven-publish'
+}
+
+base {
+	archivesName = "${rootProject.archives_base_name}-NeoForge-1.21.1"
+}
+
+configurations {
+	shadowBundle
+}
+
+neoForge {
+	version = rootProject.neoforge_1_21_1_version
+
+	runs {
+		client {
+			client()
+		}
+		server {
+			server()
+			programArgument '--nogui'
+		}
+		configureEach {
+			logLevel = org.slf4j.event.Level.INFO
+		}
+	}
+
+	mods {
+		videoplayer {
+			sourceSet(sourceSets.main)
+		}
+	}
+	unitTest {
+		enable()
+		testedMod = mods.videoplayer
+	}
+}
+
+def localSourceRoot = file('src/main/java')
+def overridePaths = fileTree(localSourceRoot) {
+	include '**/*.java'
+}.files.collect {
+	localSourceRoot.toPath().relativize(it.toPath()).toString().replace('\\', '/')
+}
+
+def generatedMainSources = layout.buildDirectory.dir('generated/sources/portedMain')
+def generatedClientSources = layout.buildDirectory.dir('generated/sources/portedClient')
+// Share server logic too, so protocol and persistence fixes reach every loader.
+def portMainLine = { String line ->
+	line.replace('import net.fabricmc.fabric.api.networking.v1.PlayerLookup;', '')
+		.replace('import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;', 'import net.neoforged.neoforge.network.PacketDistributor;')
+		.replace('import net.minecraft.server.permissions.Permissions;', '')
+		.replace('.dimension().identifier()', '.dimension().location()')
+		.replace('.getGameProfile().name()', '.getGameProfile().getName()')
+		.replace('loadWorld(current, player.level())', 'loadWorld(current, player.serverLevel())')
+		.replace('loadWorld(player.level().getServer(), player.level())', 'loadWorld(player.level().getServer(), player.serverLevel())')
+		.replace('PlayerLookup.all(current)', 'current.getPlayerList().getPlayers()')
+		.replace('player.createCommandSourceStack().permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)', 'player.hasPermissions(2)')
+		.replace('ServerPlayNetworking.send(', 'PacketDistributor.sendToPlayer(')
+		.replace('Fabric VideoPlayer', 'NeoForge VideoPlayer')
+}
+def prepareNeoForgeMainSources = tasks.register('prepareNeoForgeMainSources', Sync) {
+	inputs.file('build.gradle')
+	from(rootProject.file('src/main/java')) {
+		exclude overridePaths
+		filter portMainLine
+	}
+	into generatedMainSources
+}
+// Keep the shared screens and command tree in sync with the Fabric editions.
+// Only mechanical mapping changes live here; rendering is implemented locally.
+def portClientLine = { String line ->
+	if (!line.contains('RenderPipelines.GUI_TEXTURED')) {
+		line = line.replace('context.blit(', 'com.github.squi2rel.vp.compat.GuiTextures.blit(context, ')
+	}
+	line = line
+		.replaceAll('\\bIdentifier\\b', 'ResourceLocation')
+		.replace('net.minecraft.client.renderer.rendertype.RenderType', 'net.minecraft.client.renderer.RenderType')
+		.replaceAll('\\bRenderTypes\\b', 'RenderType')
+		.replace('import net.minecraft.util.profiling.Profiler;', '')
+		.replace('Profiler.get()', 'Minecraft.getInstance().getProfiler()')
+		.replace('net.minecraft.client.input.', 'com.github.squi2rel.vp.compat.input.')
+		.replace('.dimension().identifier()', '.dimension().location()')
+		.replace('.getGameProfile().name()', '.getGameProfile().getName()')
+		.replace('(FabricClientCommandSource) client.player.connection.getSuggestionsProvider()', 'ClientCommandManager.getSource()')
+		.replace('KeyMapping.Category.register(ResourceLocation.fromNamespaceAndPath("videoplayer", "videoplayer"))', '"key.categories.videoplayer"')
+		.replace('.pose().pushMatrix()', '.pose().pushPose()')
+		.replace('.pose().popMatrix()', '.pose().popPose()')
+		.replace('.getMainCamera().position()', '.getMainCamera().getPosition()')
+		.replace('.getWindow().handle()', '.getWindow().getWindow()')
+		.replace('image.setPixel(', 'image.setPixelRGBA(')
+		.replace('import net.minecraft.client.renderer.RenderPipelines;', '')
+		.replace('context.blit(RenderPipelines.GUI_TEXTURED, textureId, drawX, drawY, 0.0f, 0.0f, drawWidth, drawHeight, imageWidth, imageHeight, imageWidth, imageHeight)', 'context.blit(textureId, drawX, drawY, drawWidth, drawHeight, 0.0f, 0.0f, imageWidth, imageHeight, imageWidth, imageHeight)')
+		.replace('new DynamicTexture(id::toString, image)', 'new DynamicTexture(image)')
+		.replace('InputConstants.isKeyDown(window,', 'InputConstants.isKeyDown(window.getWindow(),')
+		.replace('List<Float> id = data.floats();', 'List<Float> id = List.of((float) data.value());')
+		.replace('.getDeltaTracker()', '.getTimer()')
+		.replace('.setLineWidth(1.0f)', '')
+		.replace('data.getFloat(0)', '(float) data.value()')
+		.replace('new DynamicTexture(() -> "VideoPlayer Bilibili QR", image)', 'new DynamicTexture(image)')
+	if (line.contains('.pose().translate(')) line = line.replaceAll('\\);$', ', 0);')
+	if (line.contains('.pose().scale(')) line = line.replaceAll('\\);$', ', 1);')
+	if (line.contains('.pose().rotate(')) line = line.replace('.pose().rotate(', '.pose().mulPose(new org.joml.Quaternionf().rotationZ(').replaceAll('\\);$', '));')
+	// 1.21.1 passes individual input arguments instead of event records.
+	line = line.replaceAll('(keyPressed)\\(KeyEvent (\\w+)\\) \\{', '$1(int vpKey, int vpScan, int vpMods) { KeyEvent $2 = new KeyEvent(vpKey, vpScan, vpMods);')
+	line = line.replaceAll('(charTyped)\\(CharacterEvent (\\w+)\\) \\{', '$1(char vpChar, int vpMods) { CharacterEvent $2 = new CharacterEvent(vpChar, vpMods);')
+	line = line.replaceAll('(mouseClicked)\\(MouseButtonEvent (\\w+), boolean doubleClick\\) \\{', '$1(double vpX, double vpY, int vpButton) { MouseButtonEvent $2 = new MouseButtonEvent(vpX, vpY, vpButton); boolean doubleClick = false;')
+	line = line.replaceAll('(mouseReleased)\\(MouseButtonEvent (\\w+)\\) \\{', '$1(double vpX, double vpY, int vpButton) { MouseButtonEvent $2 = new MouseButtonEvent(vpX, vpY, vpButton);')
+	line = line.replaceAll('(mouseDragged)\\(MouseButtonEvent (\\w+), double deltaX, double deltaY\\) \\{', '$1(double vpX, double vpY, int vpButton, double deltaX, double deltaY) { MouseButtonEvent $2 = new MouseButtonEvent(vpX, vpY, vpButton);')
+	line = line.replaceAll('(onClick)\\(MouseButtonEvent (\\w+), boolean doubleClick\\) \\{', '$1(double vpX, double vpY) { MouseButtonEvent $2 = new MouseButtonEvent(vpX, vpY, 0); boolean doubleClick = false;')
+	line = line.replaceAll('(onRelease)\\(MouseButtonEvent (\\w+)\\) \\{', '$1(double vpX, double vpY) { MouseButtonEvent $2 = new MouseButtonEvent(vpX, vpY, 0);')
+	line = line.replace('.keyPressed(input)', '.keyPressed(input.key(), input.scancode(), input.modifiers())')
+		.replace('.charTyped(input)', '.charTyped((char) input.codepoint(), input.modifiers())')
+		.replace('.mouseClicked(click, doubleClick)', '.mouseClicked(click.x(), click.y(), click.button())')
+		.replace('.mouseDragged(click, deltaX, deltaY)', '.mouseDragged(click.x(), click.y(), click.button(), deltaX, deltaY)')
+		.replace('.mouseReleased(click)', '.mouseReleased(click.x(), click.y(), click.button())')
+		.replace('.onRelease(click)', '.onRelease(click.x(), click.y())')
+		.replace('.onClick(click, doubleClick)', '.onClick(click.x(), click.y())')
+	return line
+}
+def prepareNeoForgeClientSources = tasks.register('prepareNeoForgeClientSources', Sync) {
+	inputs.file('build.gradle')
+	from(rootProject.file('src/client/java')) {
+		exclude overridePaths
+		exclude 'com/github/squi2rel/vp/VideoPlayerModMenu.java'
+		exclude '**/GameRendererAccessor.java', '**/DrawContextAccessor.java'
+		filter portClientLine
+	}
+	from(rootProject.file('mcng-fabric-client/src/main/java')) {
+		exclude '**/MCNGDebug*.java', '**/MCNGFabricClient.java'
+		filter portClientLine
+	}
+	into generatedClientSources
+}
+
+sourceSets {
+	main {
+		resources.setSrcDirs([
+			file('src/main/resources'),
+			rootProject.file('src/main/resources'),
+			rootProject.file('src/client/resources')
+		])
+		resources.exclude 'fabric.mod.json'
+	}
+	test {
+		java.setSrcDirs([rootProject.file('src/test/java')])
+		resources.setSrcDirs([rootProject.file('src/test/resources')])
+	}
+}
+
+dependencies {
+	implementation 'org.brotli:dec:0.1.2'
+	implementation 'com.google.zxing:core:3.5.3'
+	implementation(project(':mcng-core')) {
+		exclude group: 'com.google.code.gson', module: 'gson'
+	}
+
+	shadowBundle 'org.brotli:dec:0.1.2'
+	shadowBundle 'com.google.zxing:core:3.5.3'
+	shadowBundle(project(':mcng-core')) {
+		exclude group: 'com.google.code.gson', module: 'gson'
+	}
+
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('compileJava', JavaCompile) {
+	dependsOn prepareNeoForgeMainSources
+	dependsOn prepareNeoForgeClientSources
+	source generatedMainSources
+	source generatedClientSources
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.release = 21
+	options.encoding = 'UTF-8'
+	options.compilerArgs.addAll(['-Xmaxerrs', '2000'])
+}
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+	withSourcesJar()
+}
+
+processResources {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+	inputs.property 'version', project.version
+	filesMatching('META-INF/neoforge.mods.toml') {
+		expand(version: project.version)
+	}
+}
+
+jar {
+	archiveClassifier = 'plain'
+	from(rootProject.file('LICENSE')) {
+		rename { "${it}_${project.base.archivesName.get()}" }
+	}
+	from(rootProject.file('MCNG_LICENSE')) {
+		rename { "${it}_${project.base.archivesName.get()}" }
+	}
+}
+
+shadowJar {
+	archiveClassifier = ''
+	configurations = [project.configurations.shadowBundle]
+	from(rootProject.file('LICENSE')) {
+		rename { "${it}_${project.base.archivesName.get()}" }
+	}
+	from(rootProject.file('MCNG_LICENSE')) {
+		rename { "${it}_${project.base.archivesName.get()}" }
+	}
+	relocate 'com.github.squi2rel.mcng', 'com.github.squi2rel.vp.shadow.mcng'
+	relocate 'net.fabricmc', 'com.github.squi2rel.vp.shadow.fabric'
+}
+
+tasks.named('sourcesJar') {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+	dependsOn prepareNeoForgeMainSources
+	dependsOn prepareNeoForgeClientSources
+	from generatedMainSources
+	from generatedClientSources
+}
+
+tasks.named('assemble') {
+	dependsOn tasks.named('shadowJar')
+}
+
+test {
+	useJUnitPlatform()
+}
+
+publishing {
+	publications {
+		create('mavenJava', MavenPublication) {
+			artifactId = project.base.archivesName.get()
+			from components.java
+		}
+	}
+}

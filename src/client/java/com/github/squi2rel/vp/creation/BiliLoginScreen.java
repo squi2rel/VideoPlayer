@@ -112,6 +112,12 @@ public class BiliLoginScreen extends Screen {
     }
 
     @Override
+    public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta) {
+        // render() draws the backdrop before the QR code. The vanilla implementation
+        // applies blur when super.render() draws the widgets, which would blur the QR.
+    }
+
+    @Override
     public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, width, height, 0xB0000000);
 

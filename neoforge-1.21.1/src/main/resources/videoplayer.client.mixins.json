@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "com.github.squi2rel.vp.mixin.client",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClientPlayNetworkHandlerMixin",
+    "FontAccessor",
+    "GameRendererMixin",
+    "MinecraftClientAccessor",
+    "MinecraftClientMixin",
+    "VoxyThreadUtilsMixin",
+    "WindowMixin",
+    "WorldRendererMixin"
+  ],
+  "injectors": { "defaultRequire": 1 }
+}

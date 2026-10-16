@@ -1,0 +1,33 @@
+modLoader="javafml"
+loaderVersion="[1,)"
+license="GPL-3.0"
+
+[[mods]]
+modId="videoplayer"
+version="${version}"
+displayName="VideoPlayer"
+authors="squi2rel, cloudfl4re"
+description='''
+Play videos in Minecraft using MPV or VLC.
+'''
+logoFile="assets/videoplayer/icon.png"
+
+[[dependencies.videoplayer]]
+modId="neoforge"
+type="required"
+versionRange="[21.1,)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.videoplayer]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1]"
+ordering="NONE"
+side="BOTH"
+
+[[mixins]]
+config="videoplayer.mixins.json"
+
+[[mixins]]
+config="videoplayer.client.mixins.json"
