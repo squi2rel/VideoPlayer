@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,6 +21,57 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ResidencePermissionHookTest {
+    @Test
+    void completeMaskTraversesLargeClaimCollectionOnlyOnce() {
+        Player player = player(true, false, false, world());
+        AtomicInteger lookups = new AtomicInteger();
+        List<ResidencePermissionHook.Claim> claims = new ArrayList<>();
+        claims.add(residence("selected", 0, 0, 0, 9, 9, 9));
+        for (int i = 1; i <= 2000; i++) claims.add(residence("other" + i, i * 20, 0, 0, i * 20 + 9, 9, 9));
+        ResidencePermissionHook hook = new ResidencePermissionHook(
+                ignored -> player, location -> null, ignored -> {
+                    lookups.incrementAndGet();
+                    return claims;
+                }, (claim, checkedPlayer, flag, fallback) -> flag.equals("videoplayer.action.play"));
+        VideoPermissionPlayer permissionPlayer = permissionPlayer(player.getUniqueId(), false);
+        VideoPermissionContext context = VideoPermissionContext.bounds("world", "area", new Vector3f(1), new Vector3f(8));
+        long expected = 0L;
+        for (VideoPermissionAction action : VideoPermissionAction.values()) {
+            if (hook.resolve(permissionPlayer, action, context) == AreaPermissionDecision.ALLOW) expected |= action.bit();
+        }
+        lookups.set(0);
+        VideoPermissions.setAreaResolver(hook);
+        try {
+            assertEquals(expected, VideoPermissions.mask(permissionPlayer, context));
+            assertEquals(1, lookups.get());
+        } finally {
+            VideoPermissions.reset();
+        }
+    }
+
+    @Test
+    void preparedPointReusesClaimButDoesNotCacheFlagValuesAcrossMasks() {
+        Player player = player(true, false, false, world());
+        AtomicInteger lookups = new AtomicInteger();
+        AtomicReference<Boolean> flag = new AtomicReference<>(true);
+        TestClaim claim = residence("point");
+        ResidencePermissionHook hook = new ResidencePermissionHook(ignored -> player, location -> {
+            lookups.incrementAndGet();
+            return claim;
+        }, ignored -> List.of(), (residence, checkedPlayer, name, fallback) -> flag.get());
+        VideoPermissions.setAreaResolver(hook);
+        try {
+            VideoPermissionPlayer permissionPlayer = permissionPlayer(player.getUniqueId(), false);
+            assertTrue(VideoPermissions.mask(permissionPlayer, pointContext()) != 0L);
+            assertEquals(1, lookups.get());
+            flag.set(false);
+            assertEquals(0L, VideoPermissions.mask(permissionPlayer, pointContext()));
+            assertEquals(2, lookups.get());
+        } finally {
+            VideoPermissions.reset();
+        }
+    }
+
     @Test
     void boundsAllowsSelectionEntirelyInWilderness() {
         World world = world();

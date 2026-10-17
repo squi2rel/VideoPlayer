@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp.network;
 
 import com.github.squi2rel.vp.DataHolder;
+import com.github.squi2rel.vp.FoliaScheduler;
 import com.github.squi2rel.vp.ClientVersionTracker;
 import com.github.squi2rel.vp.PaperNativeRuntime;
 import com.github.squi2rel.vp.VideoPlayerMain;
@@ -18,6 +19,7 @@ import com.github.squi2rel.vp.permission.VideoPermissionAction;
 import com.github.squi2rel.vp.permission.VideoPermissionContext;
 import com.github.squi2rel.vp.permission.VideoPermissionPlayer;
 import com.github.squi2rel.vp.permission.VideoPermissions;
+import com.github.squi2rel.vp.permission.PermissionRefreshQueue;
 import com.github.squi2rel.vp.video.IVideoListener;
 import com.github.squi2rel.vp.video.MetaType;
 import com.github.squi2rel.vp.video.MetaValue;
@@ -45,6 +47,29 @@ import static com.github.squi2rel.vp.VideoPlayerMain.LOGGER;
 
 public class ServerPacketHandler {
     private static final float EPSILON = 0.02f;
+    private static volatile PermissionRefreshQueue permissionRefreshQueue;
+
+    public static void initializePermissionRefresh() {
+        shutdownPermissionRefresh();
+        permissionRefreshQueue = new PermissionRefreshQueue(FoliaScheduler::runAtEntity,
+                ServerPacketHandler::permissionSnapshot, player -> DataHolder.worldKey(player.getWorld()),
+                ServerPacketHandler::sendRefreshedPermissionContext, System::nanoTime);
+    }
+
+    public static void shutdownPermissionRefresh() {
+        PermissionRefreshQueue queue = permissionRefreshQueue;
+        if (queue != null) queue.close();
+    }
+
+    public static void cancelPermissionRefresh(UUID uuid) {
+        PermissionRefreshQueue queue = permissionRefreshQueue;
+        if (queue != null) queue.cancel(uuid);
+    }
+
+    public static void refreshPermissions(UUID uuid, Player player) {
+        PermissionRefreshQueue queue = permissionRefreshQueue;
+        if (queue != null && uuid != null && player != null) queue.request(uuid, player);
+    }
 
     public static void handle(Player player, ByteBuf buf) {
         handle(player, buf, System.currentTimeMillis());
@@ -827,38 +852,72 @@ public class ServerPacketHandler {
 
     public static void refreshPermissions(Player player) {
         if (player == null) return;
+        PermissionRefreshQueue queue = permissionRefreshQueue;
+        if (queue != null) {
+            queue.request(player.getUniqueId(), player);
+            return;
+        }
+        for (VideoPermissionContext context : permissionSnapshot(player).contexts()) sendPermissionCache(player, context);
+    }
+
+    static PermissionRefreshQueue.Snapshot permissionSnapshot(Player player) {
+        String dim = DataHolder.worldKey(player.getWorld());
+        UUID uuid = player.getUniqueId();
+        ArrayList<VideoPermissionContext> contexts = new ArrayList<>();
+        contexts.add(VideoPermissionContext.global(dim));
         synchronized (DataHolder.LOCK) {
-            sendGlobalPermissions(player);
-            String dim = DataHolder.worldKey(player.getWorld());
             HashMap<String, VideoArea> map = DataHolder.areas.get(dim);
-            if (map == null) return;
-            for (VideoArea area : map.values()) {
-                if (area.containsPlayer(player.getUniqueId())) {
-                    sendAreaPermissions(player, area);
+            if (map != null) {
+                for (VideoArea area : map.values()) {
+                    if (!area.containsPlayer(uuid)) continue;
+                    contexts.add(VideoPermissionContext.area(area));
+                    for (VideoScreen screen : area.screens) contexts.add(VideoPermissionContext.screen(screen));
                 }
             }
         }
+        return new PermissionRefreshQueue.Snapshot(dim, contexts);
+    }
+
+    static void sendRefreshedPermissionContext(Player player, VideoPermissionContext expected) {
+        String dim = DataHolder.worldKey(player.getWorld());
+        UUID uuid = player.getUniqueId();
+        if (!dim.equals(expected.dimension())) return;
+        VideoPermissionContext current;
+        synchronized (DataHolder.LOCK) {
+            if (!expected.hasArea()) {
+                current = VideoPermissionContext.global(dim);
+            } else {
+                HashMap<String, VideoArea> areas = DataHolder.areas.get(dim);
+                VideoArea area = areas == null ? null : areas.get(expected.areaName());
+                if (area == null || !area.containsPlayer(uuid)) return;
+                if (expected.screenName() == null) {
+                    current = VideoPermissionContext.area(area);
+                } else {
+                    VideoScreen screen = area.getScreen(expected.screenName());
+                    if (screen == null) return;
+                    current = VideoPermissionContext.screen(screen);
+                }
+            }
+        }
+        long mask = VideoPermissions.mask(VideoPermissions.player(player), current);
+        DataHolder.sendToCurrentThread(player, VideoPackets.permissions(current.areaName(), current.screenName(), mask));
     }
 
     public static void refreshPermissions(Player player, VideoArea area) {
-        sendAreaPermissions(player, area);
+        if (area == null) return;
+        if (permissionRefreshQueue == null) sendAreaPermissions(player, area);
+        else refreshPermissions(player);
     }
 
     public static void refreshPermissions(VideoArea area) {
         if (area == null) return;
         List<UUID> players;
-        ArrayList<VideoPermissionContext> contexts = new ArrayList<>();
         synchronized (DataHolder.LOCK) {
             if (!area.hasPlayer()) return;
             players = area.playerSnapshot();
-            contexts.add(VideoPermissionContext.area(area));
-            for (VideoScreen screen : area.screens) {
-                contexts.add(VideoPermissionContext.screen(screen));
-            }
         }
-        List<VideoPermissionContext> snapshot = List.copyOf(contexts);
         for (UUID uuid : players) {
-            DataHolder.runForPlayer(uuid, player -> sendPermissionContexts(player, snapshot));
+            DataHolder.runForPlayer(uuid, player -> refreshPermissions(player, area));
         }
     }
 

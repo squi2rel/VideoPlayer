@@ -10,8 +10,43 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class VideoPermissionsResidenceControlTest {
+    @Test
+    void preparedMaskPreservesEverySingleActionDecision() {
+        Player player = player(false, false, Set.of("videoplayer.action.play", "videoplayer.action.remove_screen"));
+        VideoPermissions.setAreaResolver((ignored, action, context) -> switch (action) {
+            case SEEK, UPDATE_SCREEN -> AreaPermissionDecision.ALLOW;
+            case PLAY -> AreaPermissionDecision.DENY;
+            default -> AreaPermissionDecision.NOT_APPLICABLE;
+        });
+        long expected = 0L;
+        for (VideoPermissionAction action : VideoPermissionAction.values()) {
+            if (VideoPermissions.allowed(VideoPermissions.player(player), action, screenContext())) expected |= action.bit();
+        }
+        assertEquals(expected, VideoPermissions.mask(VideoPermissions.player(player), screenContext()));
+    }
+
+    @Test
+    void maskDoesNotPrepareResolverForAdministratorsOrOfflinePlayers() {
+        VideoPermissions.setAreaResolver(new AreaPermissionResolver() {
+            @Override
+            public AreaPermissionDecision resolve(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context) {
+                throw new AssertionError("resolver must not run");
+            }
+
+            @Override
+            public AreaPermissionResolver prepare(VideoPermissionPlayer player, VideoPermissionContext context) {
+                throw new AssertionError("prepare must not run");
+            }
+        });
+        assertEquals(0L, VideoPermissions.mask(VideoPermissions.player(player(true, true, Set.of())), screenContext()));
+        long allActions = 0L;
+        for (VideoPermissionAction action : VideoPermissionAction.values()) allActions |= action.bit();
+        assertEquals(allActions, VideoPermissions.mask(VideoPermissions.player(player(true, false, Set.of())), screenContext()));
+    }
+
     @AfterEach
     void resetPermissionCheckers() {
         VideoPermissions.reset();

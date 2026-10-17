@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp.permission;
 
 import com.github.squi2rel.vp.FoliaScheduler;
+import com.github.squi2rel.vp.DataHolder;
 import com.github.squi2rel.vp.VideoPlayerMain;
 import com.github.squi2rel.vp.network.ServerPacketHandler;
 import org.bukkit.Bukkit;
@@ -18,10 +19,37 @@ import org.joml.Vector3f;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 public final class ResidencePermissionBridge {
     private static final long RETRY_DELAY_MILLIS = 30_000L;
     private static final Object LOCK = new Object();
+    private static final AreaPermissionResolver RESOLVER = new AreaPermissionResolver() {
+        @Override
+        public AreaPermissionDecision resolve(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context) {
+            return ResidencePermissionBridge.resolve(player, action, context);
+        }
+
+        @Override
+        public AreaPermissionResolver prepare(VideoPermissionPlayer player, VideoPermissionContext context) {
+            Binding current = currentBinding();
+            try {
+                AreaPermissionResolver prepared = current.delegate().prepare(player, context);
+                return (checkedPlayer, action, checkedContext) -> {
+                    if (binding != current) return ResidencePermissionBridge.resolve(checkedPlayer, action, checkedContext);
+                    try {
+                        return prepared.resolve(checkedPlayer, action, checkedContext);
+                    } catch (Throwable error) {
+                        fail(current, error);
+                        return FAILED.resolve(checkedPlayer, action, checkedContext);
+                    }
+                };
+            } catch (Throwable error) {
+                fail(current, error);
+                return FAILED;
+            }
+        }
+    };
 
     public enum State {
         ABSENT_ALLOW,
@@ -136,6 +164,10 @@ public final class ResidencePermissionBridge {
 
     public static State state() {
         return binding.state();
+    }
+
+    public static AreaPermissionResolver resolver() {
+        return RESOLVER;
     }
 
     public static AreaPermissionDecision resolve(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context) {
@@ -359,11 +391,14 @@ public final class ResidencePermissionBridge {
                     residence.getClass().getClassLoader()
             );
             Class<? extends Event> eventType = loaded.asSubclass(Event.class);
+            ResidenceFlagRefreshFilter filter = new ResidenceFlagRefreshFilter(eventType);
             Bukkit.getPluginManager().registerEvent(
                     eventType,
                     listener,
                     EventPriority.MONITOR,
-                    (ignoredListener, ignoredEvent) -> schedulePermissionCacheRefresh(),
+                    (ignoredListener, event) -> {
+                        if (filter.shouldRefresh(event)) schedulePermissionCacheRefresh();
+                    },
                     plugin,
                     true
             );
@@ -456,11 +491,15 @@ public final class ResidencePermissionBridge {
             permissionCacheRefreshTask = FoliaScheduler.TaskHandle.NONE;
         }
         try {
-            for (Player player : List.copyOf(Bukkit.getOnlinePlayers())) {
+            List<UUID> players;
+            synchronized (DataHolder.LOCK) {
+                players = List.copyOf(DataHolder.allPlayers);
+            }
+            for (UUID uuid : players) {
                 try {
-                    FoliaScheduler.runAtEntity(player, () -> {
-                        if (active(expectedEpoch)) ServerPacketHandler.refreshPermissions(player);
-                    }, null);
+                    if (!active(expectedEpoch)) return;
+                    Player player = Bukkit.getPlayer(uuid);
+                    if (player != null) ServerPacketHandler.refreshPermissions(uuid, player);
                 } catch (Throwable error) {
                     VideoPlayerMain.LOGGER.warn("Failed to schedule Residence permission cache refresh for an online player", error);
                 }
@@ -539,9 +578,7 @@ public final class ResidencePermissionBridge {
         }
     }
 
-    interface Delegate {
-        AreaPermissionDecision resolve(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context);
-
+    interface Delegate extends AreaPermissionResolver {
         AreaPermissionDecision resolveBounds(Player player, VideoPermissionAction action, Vector3f first, Vector3f second);
 
         default Coverage coverage(VideoPermissionPlayer player, VideoPermissionContext context) {

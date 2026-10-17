@@ -36,7 +36,7 @@ final class ResidenceReflection {
 
     static Object invoke(Handle handle, Object... arguments) {
         try {
-            return handle.method().invokeWithArguments(arguments);
+            return (Object) handle.method().invokeExact(arguments);
         } catch (RuntimeException error) {
             throw error;
         } catch (Error error) {
@@ -51,5 +51,10 @@ final class ResidenceReflection {
     }
 
     record Handle(String owner, String name, MethodHandle method) {
+        Handle {
+            method = method.asFixedArity()
+                    .asSpreader(Object[].class, method.type().parameterCount())
+                    .asType(MethodType.methodType(Object.class, Object[].class));
+        }
     }
 }

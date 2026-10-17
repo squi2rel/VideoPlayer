@@ -41,13 +41,18 @@ public final class VideoPermissions {
     }
 
     public static boolean allowed(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context) {
+        return allowed(player, action, context, areaResolver);
+    }
+
+    private static boolean allowed(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context,
+                                   AreaPermissionResolver resolver) {
         VideoPermissionContext safeContext = context == null ? VideoPermissionContext.global(null) : context;
         if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.online()) return false;
         if (player.opOrGameMaster()) return true;
         if (action == VideoPermissionAction.SEEK
                 && player instanceof BukkitPermissionPlayer bukkit
                 && !bukkit.hasAction(action)) return false;
-        AreaPermissionDecision areaDecision = areaResolver.resolve(player, action, safeContext);
+        AreaPermissionDecision areaDecision = resolver.resolve(player, action, safeContext);
         if (areaDecision == AreaPermissionDecision.ALLOW) return true;
         if (areaDecision == null || areaDecision == AreaPermissionDecision.DENY) return false;
         if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.hasAction(action)) return false;
@@ -55,9 +60,17 @@ public final class VideoPermissions {
     }
 
     public static long mask(VideoPermissionPlayer player, VideoPermissionContext context) {
+        if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.online()) return 0L;
+        if (player.opOrGameMaster()) {
+            long mask = 0L;
+            for (VideoPermissionAction action : VideoPermissionAction.values()) mask |= action.bit();
+            return mask;
+        }
+        VideoPermissionContext safeContext = context == null ? VideoPermissionContext.global(null) : context;
+        AreaPermissionResolver prepared = areaResolver.prepare(player, safeContext);
         long mask = 0L;
         for (VideoPermissionAction action : VideoPermissionAction.values()) {
-            if (allowed(player, action, context)) {
+            if (allowed(player, action, safeContext, prepared)) {
                 mask |= action.bit();
             }
         }

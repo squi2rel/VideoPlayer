@@ -74,40 +74,47 @@ final class ResidencePermissionHook implements ResidencePermissionBridge.Delegat
 
     @Override
     public AreaPermissionDecision resolve(VideoPermissionPlayer permissionPlayer, VideoPermissionAction action, VideoPermissionContext context) {
-        if (permissionPlayer == null || permissionPlayer.uuid() == null) return AreaPermissionDecision.DENY;
+        return prepare(permissionPlayer, context).resolve(permissionPlayer, action, context);
+    }
+
+    @Override
+    public AreaPermissionResolver prepare(VideoPermissionPlayer permissionPlayer, VideoPermissionContext context) {
+        if (permissionPlayer == null || permissionPlayer.uuid() == null) return fixed(AreaPermissionDecision.DENY);
         Player player = playerLookup.apply(permissionPlayer.uuid());
-        if (player == null || !player.isOnline()) return AreaPermissionDecision.DENY;
-        if (player.isOp() || player.hasPermission(VideoPermissions.ADMIN)) return AreaPermissionDecision.ALLOW;
-        boolean defaultAllowed = DEFAULT_ALLOWED.contains(action);
+        if (player == null || !player.isOnline()) return fixed(AreaPermissionDecision.DENY);
+        if (player.isOp() || player.hasPermission(VideoPermissions.ADMIN)) return fixed(AreaPermissionDecision.ALLOW);
+        ClaimSelection selection = selection(player, context);
+        if (selection.claim() == null) return fixed(selection.decision());
+        return (ignoredPlayer, action, ignoredContext) -> resolveSelected(selection, player, action, DEFAULT_ALLOWED.contains(action));
+    }
+
+    private ClaimSelection selection(Player player, VideoPermissionContext context) {
         if (context != null && context.screenName() != null && context.hasScreenBounds()) {
             VideoPermissionContext.Position min = context.screenMin();
             VideoPermissionContext.Position max = context.screenMax();
-            return resolveBounds(
+            return selectBounds(
                     player,
-                    action,
                     new Vector3f((float) min.x(), (float) min.y(), (float) min.z()),
-                    new Vector3f((float) max.x(), (float) max.y(), (float) max.z()),
-                    defaultAllowed
+                    new Vector3f((float) max.x(), (float) max.y(), (float) max.z())
             );
         }
         if (context != null && context.anchor() != null) {
-            return resolveAt(player, action, location(player, context.anchor()), defaultAllowed);
+            Claim residence = residenceLookup.apply(location(player, context.anchor()));
+            return new ClaimSelection(AreaPermissionDecision.NOT_APPLICABLE, residence);
         }
         if (context != null && context.screenName() != null && !context.screenName().isBlank()) {
-            return AreaPermissionDecision.DENY;
+            return new ClaimSelection(AreaPermissionDecision.DENY, null);
         }
         if (context != null && context.hasBounds()) {
             VideoPermissionContext.Position min = context.areaMin();
             VideoPermissionContext.Position max = context.areaMax();
-            return resolveBounds(
+            return selectBounds(
                     player,
-                    action,
                     new Vector3f((float) min.x(), (float) min.y(), (float) min.z()),
-                    new Vector3f((float) max.x(), (float) max.y(), (float) max.z()),
-                    defaultAllowed
+                    new Vector3f((float) max.x(), (float) max.y(), (float) max.z())
             );
         }
-        return AreaPermissionDecision.NOT_APPLICABLE;
+        return new ClaimSelection(AreaPermissionDecision.NOT_APPLICABLE, null);
     }
 
     @Override
@@ -165,8 +172,12 @@ final class ResidencePermissionHook implements ResidencePermissionBridge.Delegat
     }
 
     private AreaPermissionDecision resolveBounds(Player player, VideoPermissionAction action, Vector3f first, Vector3f second, boolean defaultAllowed) {
+        return resolveSelected(selectBounds(player, first, second), player, action, defaultAllowed);
+    }
+
+    private ClaimSelection selectBounds(Player player, Vector3f first, Vector3f second) {
         BlockBox selection = BlockBox.selection(first, second);
-        if (selection == null) return AreaPermissionDecision.DENY;
+        if (selection == null) return new ClaimSelection(AreaPermissionDecision.DENY, null);
         Collection<Claim> found = claimLookup.apply(player.getWorld());
         if (found == null) throw new IllegalStateException("Residence claim lookup returned null");
         ArrayList<Claim> roots = new ArrayList<>();
@@ -180,10 +191,14 @@ final class ResidencePermissionHook implements ResidencePermissionBridge.Delegat
         Set<Claim> deepest = Collections.newSetFromMap(new IdentityHashMap<>());
         Set<Claim> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Claim root : roots) collectDeepest(root, selection, player.getWorld(), deepest, visited);
-        if (deepest.isEmpty()) return wilderness ? AreaPermissionDecision.NOT_APPLICABLE : AreaPermissionDecision.DENY;
-        if (wilderness || deepest.size() != 1) return AreaPermissionDecision.DENY;
-        Claim residence = deepest.iterator().next();
-        Boolean result = actionPermission(residence, player, action);
+        if (deepest.isEmpty()) return new ClaimSelection(wilderness ? AreaPermissionDecision.NOT_APPLICABLE : AreaPermissionDecision.DENY, null);
+        if (wilderness || deepest.size() != 1) return new ClaimSelection(AreaPermissionDecision.DENY, null);
+        return new ClaimSelection(null, deepest.iterator().next());
+    }
+
+    private AreaPermissionDecision resolveSelected(ClaimSelection selection, Player player, VideoPermissionAction action, boolean defaultAllowed) {
+        if (selection.claim() == null) return selection.decision();
+        Boolean result = actionPermission(selection.claim(), player, action);
         return decision(result == null ? defaultAllowed : result);
     }
 
@@ -260,11 +275,11 @@ final class ResidencePermissionHook implements ResidencePermissionBridge.Delegat
         return remaining.isEmpty();
     }
 
-    private AreaPermissionDecision resolveAt(Player player, VideoPermissionAction action, Location location, boolean defaultAllowed) {
-        Claim residence = residenceLookup.apply(location);
-        if (residence == null) return AreaPermissionDecision.NOT_APPLICABLE;
-        Boolean result = actionPermission(residence, player, action);
-        return decision(result == null ? defaultAllowed : result);
+    private static AreaPermissionResolver fixed(AreaPermissionDecision decision) {
+        return (player, action, context) -> decision;
+    }
+
+    private record ClaimSelection(AreaPermissionDecision decision, Claim claim) {
     }
 
     private Boolean actionPermission(Claim residence, Player player, VideoPermissionAction action) {

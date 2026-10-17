@@ -74,8 +74,9 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
             } catch (CancellationException ignored) {
             }
         });
+        ServerPacketHandler.initializePermissionRefresh();
         ResidencePermissionBridge.initialize(this);
-        VideoPermissions.setAreaResolver(ResidencePermissionBridge::resolve);
+        VideoPermissions.setAreaResolver(ResidencePermissionBridge.resolver());
         for (Player player : Bukkit.getOnlinePlayers()) {
             DataHolder.runStateForPlayer(player, () -> {
                 ClientVersionTracker.playerJoined(player);
@@ -94,6 +95,7 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
         active = false;
         PaperVideoProviders.shutdown();
         ClientVersionTracker.shutdown();
+        ServerPacketHandler.shutdownPermissionRefresh();
         ResidencePermissionBridge.shutdown();
         if (ytDlpTask != null) {
             ytDlpTask.cancel();
@@ -127,6 +129,7 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
     @EventHandler
     public void onPlayerQuit(PlayerQuitEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
+        ServerPacketHandler.cancelPermissionRefresh(uuid);
         ClientVersionTracker.playerLeft(uuid);
         DataHolder.playerLeave(uuid);
     }
