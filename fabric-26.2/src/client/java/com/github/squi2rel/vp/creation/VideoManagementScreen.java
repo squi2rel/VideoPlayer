@@ -992,13 +992,12 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
                 current.volume = Math.clamp(value, 0, 100);
                 ScreenVolumeCache.put(current, current.volume);
                 if (current.player instanceof VideoPlayer player) player.setVolume(current.volume);
-            }, ignored -> {
-            });
+            }, ignored -> VideoPlayerClient.saveVolumeSettings());
         } else {
             slider(VpTexts.tr("label.videoplayer.volume", "Volume"), x + sliderW + GAP, row, sliderW, VideoPlayerClient.config.volume, value -> {
                 VideoPlayerClient.config.volume = value;
                 VideoPlayerClient.applyConfiguredVolume();
-            });
+            }, ignored -> VideoPlayerClient.saveVolumeSettings());
         }
         addPlaybackProgressSlider(x, width);
         addPlaybackBottomControls(x, width);

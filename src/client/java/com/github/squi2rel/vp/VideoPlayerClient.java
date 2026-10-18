@@ -93,6 +93,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             VideoPlayerClient::logConnectionEvent
     );
     public static Config config;
+    private static int savedVolume = 100;
     private static final Gson gson = new Gson();
     private static volatile AudioChannelMode activeAudioChannelMode = AudioChannelMode.STEREO;
 
@@ -166,6 +167,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             ).withStyle(ChatFormatting.RED), false));
         }
         loadConfig();
+        ScreenVolumeCache.initialize(configPath.getParent().resolve("screen-volumes.json"));
         registerExternalTextureReload();
         activeAudioChannelMode = AudioChannelMode.normalize(config.audioChannelMode);
         BiliBiliProvider.setCookieSupplier(BiliCookie::header);
@@ -921,6 +923,7 @@ public class VideoPlayerClient implements ClientModInitializer {
     }
 
     private static void cleanupClientState() {
+        saveVolumeSettings();
         if (client.screen instanceof ServerStateScreen) {
             client.setScreen(null);
             if (client.player != null) {
@@ -1193,6 +1196,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             } catch (AtomicMoveNotSupportedException unsupported) {
                 Files.move(temporary, configPath, StandardCopyOption.REPLACE_EXISTING);
             }
+            savedVolume = config.volume;
         } catch (IOException e) {
             throw new RuntimeException(e);
         } finally {
@@ -1247,6 +1251,16 @@ public class VideoPlayerClient implements ClientModInitializer {
             config.nativeDownloadUrls = NativeDownloadConfig.load();
         }
         return config.nativeDownloadUrls;
+    }
+
+    public static void saveVolumeSettings() {
+        ScreenVolumeCache.flush();
+        if (config == null || config.volume == savedVolume) return;
+        try {
+            saveConfig();
+        } catch (RuntimeException e) {
+            LOGGER.warn("Failed to save client volume; keeping the in-memory setting", e);
+        }
     }
 
     public static void applyConfiguredVolume() {
@@ -1356,6 +1370,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             config.youtubeQuality = youtubeQuality;
             changed = true;
         }
+        savedVolume = config.volume;
         if (changed && !preserveInvalidFile) saveConfig();
     }
 

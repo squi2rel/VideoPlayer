@@ -26,6 +26,7 @@ import com.github.squi2rel.vp.video.IVideoPlayer;
 import com.github.squi2rel.vp.video.IdlePlayEntry;
 import com.github.squi2rel.vp.video.MetaValue;
 import com.github.squi2rel.vp.video.ScreenMetadata;
+import com.github.squi2rel.vp.video.ScreenVolumeCache;
 import com.github.squi2rel.vp.video.VideoArea;
 import com.github.squi2rel.vp.video.VideoListeners;
 import com.github.squi2rel.vp.video.VideoScreen;
@@ -104,6 +105,7 @@ public class ClientPacketHandler {
                 String screenName = VideoPackets.readName(buf);
                 ClientVideoArea area = areaOrNull(areaName);
                 if (area != null) {
+                    ScreenVolumeCache.invalidate(area.dim, areaName, screenName);
                     area.remove(screenName);
                 }
                 ClientPermissionCache.removeScreen(areaName, screenName);
@@ -229,6 +231,13 @@ public class ClientPacketHandler {
         VpTranslation message = VideoPackets.readTranslation(buf);
         PendingRequest pending = pendingRequests.remove(requestId);
         if (pending == null) return;
+        if (status == RequestResultStatus.OK) {
+            if (pending.action() == VideoPermissionAction.REMOVE_AREA) {
+                ScreenVolumeCache.invalidateArea(pending.dimension(), pending.areaName());
+            } else if (pending.action() == VideoPermissionAction.REMOVE_SCREEN) {
+                ScreenVolumeCache.invalidate(pending.dimension(), pending.areaName(), pending.screenName());
+            }
+        }
         if (cacheRequestPermission(pending.action())) {
             if (status == RequestResultStatus.DENIED) {
                 ClientPermissionCache.setAllowed(pending.action(), pending.areaName(), pending.screenName(), false);
@@ -602,7 +611,10 @@ public class ClientPacketHandler {
         int requestId = nextRequestId();
         ByteBuf buf = VideoPackets.create(type);
         buf.writeInt(requestId);
-        pendingRequests.put(requestId, new PendingRequest(action, normalize(areaName), normalize(screenName), callback, System.currentTimeMillis()));
+        ClientVideoArea area = areas.get(areaName);
+        var level = Minecraft.getInstance().level;
+        String dimension = area != null ? area.dim : level == null ? null : level.dimension().identifier().toString();
+        pendingRequests.put(requestId, new PendingRequest(action, dimension, normalize(areaName), normalize(screenName), callback, System.currentTimeMillis()));
         return buf;
     }
 
@@ -971,7 +983,7 @@ public class ClientPacketHandler {
     public record RequestResult(int requestId, RequestResultStatus status, VpTranslation message) {
     }
 
-    private record PendingRequest(VideoPermissionAction action, String areaName, String screenName,
+    private record PendingRequest(VideoPermissionAction action, String dimension, String areaName, String screenName,
                                   Consumer<RequestResult> callback, long createdAt) {
     }
 
