@@ -41,11 +41,19 @@ class YtDlpManagerTest {
 
         List<NativeDownloadConfig.DownloadSource> selected = NativePackageManager.selectDownloadSources(List.of(source), "");
 
-        assertEquals(4, selected.size());
-        assertTrue(selected.get(0).url.startsWith("https://ghfast.top/"));
-        assertTrue(selected.get(1).url.startsWith("https://gh-proxy.com/"));
-        assertTrue(selected.get(2).url.startsWith("https://ghproxy.net/"));
-        assertEquals(source.url, selected.get(3).url);
+        assertEquals(List.of(
+                "https://v4.gh-proxy.org/" + source.url,
+                "https://gh-proxy.org/" + source.url,
+                "https://v6.gh-proxy.org/" + source.url,
+                "https://cdn.gh-proxy.org/" + source.url,
+                "https://axisnow.gh-proxy.org/" + source.url,
+                source.url
+        ), selected.stream().map(candidate -> candidate.url).toList());
+        assertEquals(List.of(
+                "v4.gh-proxy.org", "gh-proxy.org", "v6.gh-proxy.org",
+                "cdn.gh-proxy.org", "axisnow.gh-proxy.org", "GitHub"
+        ), selected.stream().map(candidate -> candidate.name).toList());
+        assertTrue(selected.stream().allMatch(candidate -> source.sha256.equals(candidate.sha256)));
     }
 
     @Test

@@ -69,9 +69,11 @@ public final class NativePackageManager {
     private static final String PREPARED_DIRECTORY = "vp";
     private static final String PROCESS_DIRECTORY = processDirectory();
     private static final List<DownloadMirror> DOWNLOAD_MIRRORS = List.of(
-            new DownloadMirror("ghfast.top", "https://ghfast.top/"),
-            new DownloadMirror("gh-proxy.com", "https://gh-proxy.com/"),
-            new DownloadMirror("ghproxy.net", "https://ghproxy.net/")
+            new DownloadMirror("v4.gh-proxy.org", "https://v4.gh-proxy.org/"),
+            new DownloadMirror("gh-proxy.org", "https://gh-proxy.org/"),
+            new DownloadMirror("v6.gh-proxy.org", "https://v6.gh-proxy.org/"),
+            new DownloadMirror("cdn.gh-proxy.org", "https://cdn.gh-proxy.org/"),
+            new DownloadMirror("axisnow.gh-proxy.org", "https://axisnow.gh-proxy.org/")
     );
     private static final ConcurrentMap<String, String> SELECTED_PLATFORMS = new ConcurrentHashMap<>();
     private static final ConcurrentMap<String, ReentrantLock> INSTALL_LOCKS = new ConcurrentHashMap<>();
